@@ -4,6 +4,18 @@ D3D12LookDevPT includes a local MCP server for inspecting and controlling the ru
 
 Japanese documentation: [MCP サーバー](mcp.ja.md)
 
+## MCP-Driven Workflow Example
+
+The screenshots below show a typical local workflow: an MCP-capable client issues natural-language camera and denoise requests, and D3D12LookDevPT applies them through `lookdevpt.set_camera`, `lookdevpt.set_denoise`, and `lookdevpt.get_state`.
+
+![D3D12LookDevPT after MCP camera and denoise changes](../images/screenshot002.png)
+
+The viewport above is the renderer after MCP-driven changes. The visible bearer token value is redacted; do not commit real MCP tokens in screenshots or project files.
+
+![Codex issuing MCP camera and denoise requests](../images/screenshot003.png)
+
+The client can validate settings first, apply mutation tools, then read state back to confirm that the renderer accepted the same values.
+
 ## Availability And Security
 
 - Endpoint: `http://127.0.0.1:<port>/mcp`

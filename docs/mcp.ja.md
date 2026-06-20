@@ -4,6 +4,18 @@ D3D12LookDevPT には、実行中の renderer を VS Code、Codex、独自 JSON-
 
 English documentation: [MCP Server](mcp.md)
 
+## MCP 経由の操作例
+
+下の screenshot は、MCP 対応 client から自然言語で camera と denoise の変更を指示し、D3D12LookDevPT 側で `lookdevpt.set_camera`、`lookdevpt.set_denoise`、`lookdevpt.get_state` が反映された流れです。
+
+![MCP で camera と denoise を変更した後の D3D12LookDevPT](../images/screenshot002.png)
+
+上の viewport は MCP 経由の変更後の renderer です。Bearer token の値は redacted 済みです。実 token は screenshot や project file に入れないでください。
+
+![Codex から MCP camera と denoise 変更を指示している例](../images/screenshot003.png)
+
+client 側では先に validation を通し、mutation tool を適用し、その後 `get_state` で renderer state が同じ値になったことを確認できます。
+
 ## 利用条件とセキュリティ
 
 - Endpoint: `http://127.0.0.1:<port>/mcp`

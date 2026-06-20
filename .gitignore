@@ -1,69 +1,58 @@
-# Prerequisites
+/.vs/
+/Bin/
+/Obj/
+/obj/
+/Bistro_v5_2/
+*.user
+*.suo
+*.VC.db
+*.VC.VC.opendb
+*.opensdf
+*.sdf
+*.ipch
+*.pdb
+*.ilk
 *.d
-
-# Compiled Object files
 *.slo
 *.lo
 *.o
 *.obj
-
-# Precompiled Headers
 *.gch
 *.pch
-
-# Linker files
-*.ilk
-
-# Debugger Files
-*.pdb
-
-# Compiled Dynamic libraries
-*.so
-*.dylib
 *.dll
+*.so
 *.so.*
-
-
-# Fortran module files
-*.mod
-*.smod
-
-# Compiled Static libraries
-*.lai
-*.la
-*.a
+*.dylib
 *.lib
-
-# Executables
 *.exe
 *.out
 *.app
+*.tlog
+*.log
+*.tmp
+*.bak
+*.swp
+imgui.ini
+!/imgui.ini
+imgui.user.ini
+ui.user.json
+Assets/Models/**/*.gguf
+/dist/
 
-# Build directories
 build/
 Build/
 build-*/
-
-# CMake generated files
 CMakeFiles/
 CMakeCache.txt
 cmake_install.cmake
 Makefile
 install_manifest.txt
 compile_commands.json
-
-# Temporary files
-*.tmp
-*.log
-*.bak
-*.swp
-
-# vcpkg
 vcpkg_installed/
-
-# debug information files
-*.dwo
-
-# test output & cache
 Testing/
 .cache/
+
+ThirdParty/assimp/Build/
+ThirdParty/DirectXTex/DirectXTex/Bin/
+ThirdParty/DirectXTex/DirectXTex/Obj/
+ThirdParty/llama.cpp/Build/

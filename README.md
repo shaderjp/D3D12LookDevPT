@@ -1,1 +1,74 @@
 # D3D12LookDevPT
+
+D3D12LookDevPT is a Direct3D 12 / DXR look-development path tracing sandbox. It uses rasterization only for the swapchain copy and ImGui UI; the scene image is rendered by a progressive DXR path tracer with Baseline PT, ReSTIR GI, ReSTIR DI, and combined ReSTIR GI + DI modes.
+
+## Scope
+
+- Direct3D 12 Agility SDK and DXC from NuGet.
+- Assimp scene import for static glTF/GLB/FBX/OBJ meshes.
+- DirectXTex texture loading for PNG/JPEG/TGA/DDS/HDR paths and compressed embedded textures extracted by Assimp.
+- PBR-oriented material slots: base color, normal, roughness, metallic, occlusion, emissive, alpha mask.
+- DXR BLAS/TLAS, shader tables, progressive accumulation, debug views, ReSTIR reservoirs, and lightweight AOV denoising.
+- Project files saved as `.lookdevpt.json`.
+- A local MCP server for automation via the same validation-oriented action layer used by the UI.
+
+## UI
+
+The app starts at 1920 x 1080. The first frame creates a main ImGui DockSpace with panels for `Viewport`, `Scene`, `Material`, `Lighting`, `Path Tracing`, `ReSTIR`, `Denoise`, and `Diagnostics / Stats`. UI text uses an 18 px default font with scaled spacing. The central dock node is pass-through so the DXR output remains visible behind docked tools. The material panel edits PBR factors and refreshes the GPU material buffer; texture reassignment is intentionally left for a later version.
+
+Changing the display resolution resizes the DXGI swapchain, RTVs, DXR output, accumulation, reservoir, and denoise resources together so ImGui rendering and hit testing stay in sync.
+
+## MCP / Action Layer
+
+`D3D12PathTracingBackend::ApplyAction(method, params, diagnostics, validateOnly)` currently accepts `set_scene`, `set_camera`, `set_material`, `set_lighting`, `set_path_tracing`, `set_restir`, `set_denoise`, and `set_view`.
+
+The dockable `MCP Server` panel can start a localhost MCP endpoint at `http://127.0.0.1:<port>/mcp`. The server is disabled by default, uses a bearer token stored in `%APPDATA%\D3D12LookDevPT\settings.json`, and supports read-only, confirm-mutations, and allow-mutations access modes. MCP mutations are queued onto the main thread before they touch D3D12 or ImGui state.
+
+## Build
+
+Clone submodules before building:
+
+```powershell
+git submodule update --init --recursive --depth 1
+```
+
+Visual Studio 2026 Insiders:
+
+```powershell
+& "C:\Program Files\Microsoft Visual Studio\18\Insiders\MSBuild\Current\Bin\amd64\MSBuild.exe" .\D3D12LookDevPT.sln /m /p:Configuration=Debug /p:Platform=x64
+```
+
+Visual Studio 2022:
+
+```powershell
+& "C:\Program Files\Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin\amd64\MSBuild.exe" .\D3D12LookDevPT.sln /m /p:Configuration=Debug /p:Platform=x64
+```
+
+The project auto-selects `v145` on VS 2026 and `v143` otherwise. Third-party static libraries are built by `BuildThirdParty.ps1`.
+
+Large sample assets are not stored in this repository. Download Bistro v5.2 or other test scenes separately and place them next to the solution, for example:
+
+```text
+D3D12LookDevPT/
+  Bistro_v5_2/
+    BistroExterior.fbx
+    Textures/
+```
+
+Scenes can be loaded at startup for debugging:
+
+```powershell
+.\Bin\x64\Debug\D3D12LookDevPT.exe --scene .\Bistro_v5_2\BistroExterior.fbx
+```
+
+Load diagnostics are appended to `%TEMP%\D3D12LookDevPT.log`.
+
+Validated locally:
+
+- VS 2026 Insiders `v145`: Debug x64, Release x64.
+- VS 2022 `v143`: Debug x64, Release x64.
+- Release executable smoke-tested for 5 seconds.
+
+## Notes
+
+The first viewport opens on a preview cube so the renderer can be validated before a scene is loaded. Use `Project > Open Scene...` for glTF/GLB/FBX/OBJ and `Project > Open Environment...` for HDRI/environment textures.

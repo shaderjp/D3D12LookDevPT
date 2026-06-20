@@ -1,0 +1,202 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <VCProjectVersion>18.0</VCProjectVersion>
+    <Keyword>Win32Proj</Keyword>
+    <ProjectGuid>{B65B935D-06BE-44BC-8F54-6AEAF3D4045B}</ProjectGuid>
+    <RootNamespace>D3D12LookDevPT</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0.26100.0</WindowsTargetPlatformVersion>
+    <ProjectName>D3D12LookDevPT</ProjectName>
+    <RestoreProjectStyle>PackageReference</RestoreProjectStyle>
+    <TargetFrameworkIdentifier>native</TargetFrameworkIdentifier>
+    <TargetFrameworkVersion>v0.0</TargetFrameworkVersion>
+    <Microsoft_Direct3D_D3D12_SkipLibraryCopy>false</Microsoft_Direct3D_D3D12_SkipLibraryCopy>
+    <Microsoft_Direct3D_D3D12_SkipDebugLayerCopy>false</Microsoft_Direct3D_D3D12_SkipDebugLayerCopy>
+    <Microsoft_Direct3D_D3D12_SkipIncludeDir>false</Microsoft_Direct3D_D3D12_SkipIncludeDir>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Label="ToolsetSelection">
+    <LookDevPtPlatformToolset Condition="'$(LookDevPtPlatformToolset)' == '' and '$(VisualStudioVersion)' &gt;= '18.0'">v145</LookDevPtPlatformToolset>
+    <LookDevPtPlatformToolset Condition="'$(LookDevPtPlatformToolset)' == ''">v143</LookDevPtPlatformToolset>
+    <LookDevPtVsFamily Condition="'$(LookDevPtPlatformToolset)' == 'v145'">2026</LookDevPtVsFamily>
+    <LookDevPtVsFamily Condition="'$(LookDevPtVsFamily)' == ''">2022</LookDevPtVsFamily>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>$(LookDevPtPlatformToolset)</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>$(LookDevPtPlatformToolset)</PlatformToolset>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <PropertyGroup>
+    <OutDir>$(ProjectDir)Bin\$(Platform)\$(Configuration)\</OutDir>
+    <IntDir>$(ProjectDir)Obj\$(Platform)\$(Configuration)\</IntDir>
+    <TargetName>D3D12LookDevPT</TargetName>
+    <AssimpRoot>$(ProjectDir)ThirdParty\assimp</AssimpRoot>
+    <AssimpBuildRoot>$(AssimpRoot)\Build\$(LookDevPtPlatformToolset)\$(Platform)\$(Configuration)</AssimpBuildRoot>
+    <AssimpLibDir>$(AssimpBuildRoot)\lib\$(Configuration)</AssimpLibDir>
+    <AssimpZlibDir>$(AssimpBuildRoot)\contrib\zlib\$(Configuration)</AssimpZlibDir>
+    <AssimpLibName>assimp-lookdevpt.lib</AssimpLibName>
+    <AssimpZlibName>zlib-lookdevpt.lib</AssimpZlibName>
+    <DirectXTexProject>$(ProjectDir)ThirdParty\DirectXTex\DirectXTex\DirectXTex_Desktop_$(LookDevPtVsFamily).vcxproj</DirectXTexProject>
+    <DirectXTexLibDir>$(ProjectDir)ThirdParty\DirectXTex\DirectXTex\Bin\Desktop_$(LookDevPtVsFamily)\x64\$(Configuration)</DirectXTexLibDir>
+    <NuGetPackageRoot Condition="'$(NuGetPackageRoot)'==''">$(UserProfile)\.nuget\packages\</NuGetPackageRoot>
+    <AgilitySdkBinDir>$(NuGetPackageRoot)microsoft.direct3d.d3d12\1.619.3\build\native\bin\x64\</AgilitySdkBinDir>
+    <DxcExe>$(NuGetPackageRoot)microsoft.direct3d.dxc\1.9.2602.17\build\native\bin\x64\dxc.exe</DxcExe>
+    <CompiledShaderDir>$(OutDir)</CompiledShaderDir>
+  </PropertyGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <ClCompile>
+      <WarningLevel>Level4</WarningLevel>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>WIN32;_DEBUG;_WINDOWS;UNICODE;_UNICODE;NOMINMAX;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>$(ProjectDir)Source;$(ProjectDir)Shaders;$(ProjectDir)ThirdParty\imgui;$(ProjectDir)ThirdParty\imgui\backends;$(ProjectDir)ThirdParty\DirectXTex\DirectXTex;$(ProjectDir)ThirdParty\DirectXTex\Common;$(ProjectDir)ThirdParty\assimp\include;$(AssimpBuildRoot)\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <ConformanceMode>true</ConformanceMode>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalDependencies>$(AssimpLibName);$(AssimpZlibName);DirectXTex.lib;d3d12.lib;dxgi.lib;dxguid.lib;d3dcompiler.lib;comdlg32.lib;windowscodecs.lib;ole32.lib;shell32.lib;advapi32.lib;ws2_32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>$(AssimpLibDir);$(AssimpZlibDir);$(DirectXTexLibDir);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <DelayLoadDLLs>d3d12.dll;%(DelayLoadDLLs)</DelayLoadDLLs>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <WarningLevel>Level4</WarningLevel>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>WIN32;NDEBUG;_WINDOWS;UNICODE;_UNICODE;NOMINMAX;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>$(ProjectDir)Source;$(ProjectDir)Shaders;$(ProjectDir)ThirdParty\imgui;$(ProjectDir)ThirdParty\imgui\backends;$(ProjectDir)ThirdParty\DirectXTex\DirectXTex;$(ProjectDir)ThirdParty\DirectXTex\Common;$(ProjectDir)ThirdParty\assimp\include;$(AssimpBuildRoot)\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <ConformanceMode>true</ConformanceMode>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
+    <Link>
+      <SubSystem>Windows</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <EnableCOMDATFolding>true</EnableCOMDATFolding>
+      <OptimizeReferences>true</OptimizeReferences>
+      <AdditionalDependencies>$(AssimpLibName);$(AssimpZlibName);DirectXTex.lib;d3d12.lib;dxgi.lib;dxguid.lib;d3dcompiler.lib;comdlg32.lib;windowscodecs.lib;ole32.lib;shell32.lib;advapi32.lib;ws2_32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>$(AssimpLibDir);$(AssimpZlibDir);$(DirectXTexLibDir);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <DelayLoadDLLs>d3d12.dll;%(DelayLoadDLLs)</DelayLoadDLLs>
+    </Link>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClCompile Include="Source\D3D12PathTracingBackend.cpp" />
+    <ClCompile Include="Source\DXSample.cpp" />
+    <ClCompile Include="Source\FpsCamera.cpp" />
+    <ClCompile Include="Source\Main.cpp" />
+    <ClCompile Include="Source\McpDispatcher.cpp" />
+    <ClCompile Include="Source\McpServer.cpp" />
+    <ClCompile Include="Source\PathTracingScene.cpp" />
+    <ClCompile Include="Source\SceneImporter.cpp" />
+    <ClCompile Include="Source\SimpleJson.cpp" />
+    <ClCompile Include="Source\stdafx.cpp" />
+    <ClCompile Include="Source\TextureLoader.cpp" />
+    <ClCompile Include="Source\Win32Application.cpp" />
+    <ClCompile Include="ThirdParty\imgui\imgui.cpp" />
+    <ClCompile Include="ThirdParty\imgui\imgui_draw.cpp" />
+    <ClCompile Include="ThirdParty\imgui\imgui_tables.cpp" />
+    <ClCompile Include="ThirdParty\imgui\imgui_widgets.cpp" />
+    <ClCompile Include="ThirdParty\imgui\backends\imgui_impl_dx12.cpp">
+      <DisableSpecificWarnings>4189;%(DisableSpecificWarnings)</DisableSpecificWarnings>
+    </ClCompile>
+    <ClCompile Include="ThirdParty\imgui\backends\imgui_impl_win32.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="Source\D3D12PathTracingBackend.h" />
+    <ClInclude Include="Source\DXSample.h" />
+    <ClInclude Include="Source\DXSampleHelper.h" />
+    <ClInclude Include="Source\EditorTypes.h" />
+    <ClInclude Include="Source\FpsCamera.h" />
+    <ClInclude Include="Source\McpDispatcher.h" />
+    <ClInclude Include="Source\McpServer.h" />
+    <ClInclude Include="Source\PathTracingScene.h" />
+    <ClInclude Include="Source\SceneImporter.h" />
+    <ClInclude Include="Source\SceneTypes.h" />
+    <ClInclude Include="Source\SimpleJson.h" />
+    <ClInclude Include="Source\stdafx.h" />
+    <ClInclude Include="Source\TextureLoader.h" />
+    <ClInclude Include="Source\Win32Application.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="BuildThirdParty.ps1" />
+    <None Include="imgui.ini">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Include="Shaders\PathTracingABI.hlsli" />
+    <None Include="Shaders\PathTracing.hlsl" />
+    <None Include="Shaders\PathTracingReSTIR.hlsl" />
+    <None Include="Shaders\PathTracingReSTIRDI.hlsl" />
+    <None Include="Shaders\PathTracingReSTIRCombined.hlsl" />
+    <None Include="Shaders\ReSTIRResolve.hlsl" />
+    <None Include="Shaders\PathTracingDenoise.hlsl" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Direct3D.D3D12">
+      <Version>1.619.3</Version>
+    </PackageReference>
+    <PackageReference Include="Microsoft.Direct3D.DXC">
+      <Version>1.9.2602.17</Version>
+    </PackageReference>
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <Target Name="EnsureThirdParty" BeforeTargets="PrepareForBuild">
+    <Error Condition="!Exists('$(ProjectDir)ThirdParty\imgui\imgui.cpp')" Text="ThirdParty\imgui is missing." />
+    <Error Condition="!Exists('$(ProjectDir)ThirdParty\DirectXTex\DirectXTex\DirectXTex.h')" Text="ThirdParty\DirectXTex is missing." />
+    <Error Condition="!Exists('$(ProjectDir)ThirdParty\assimp\include\assimp\Importer.hpp')" Text="ThirdParty\assimp is missing." />
+  </Target>
+  <Target Name="BuildThirdParty" BeforeTargets="ClCompile">
+    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(ProjectDir)BuildThirdParty.ps1&quot; -AssimpRoot &quot;$(AssimpRoot)&quot; -AssimpBuildRoot &quot;$(AssimpBuildRoot)&quot; -AssimpLibDir &quot;$(AssimpLibDir)&quot; -AssimpZlibDir &quot;$(AssimpZlibDir)&quot; -AssimpLibName &quot;$(AssimpLibName)&quot; -AssimpZlibName &quot;$(AssimpZlibName)&quot; -DirectXTexProject &quot;$(DirectXTexProject)&quot; -DirectXTexLibDir &quot;$(DirectXTexLibDir)&quot; -MSBuildPath &quot;$(MSBuildToolsPath)\MSBuild.exe&quot; -Configuration &quot;$(Configuration)&quot; -VisualStudioVersion &quot;$(VisualStudioVersion)&quot;" />
+  </Target>
+  <Target Name="CompileShaders" BeforeTargets="ClCompile" Inputs="Shaders\PathTracingABI.hlsli;Shaders\PathTracing.hlsl;Shaders\PathTracingReSTIR.hlsl;Shaders\PathTracingReSTIRDI.hlsl;Shaders\PathTracingReSTIRCombined.hlsl;Shaders\ReSTIRResolve.hlsl;Shaders\PathTracingDenoise.hlsl" Outputs="$(CompiledShaderDir)PathTracing.lib.cso;$(CompiledShaderDir)PathTracingReSTIR.lib.cso;$(CompiledShaderDir)PathTracingReSTIRDI.lib.cso;$(CompiledShaderDir)PathTracingReSTIRCombined.lib.cso;$(CompiledShaderDir)ReSTIRResolve.cso;$(CompiledShaderDir)ReSTIRResolveDI.cso;$(CompiledShaderDir)PathTracingDenoiseTemporal.cso;$(CompiledShaderDir)PathTracingDenoiseAtrous0.cso;$(CompiledShaderDir)PathTracingDenoiseAtrous1.cso;$(CompiledShaderDir)PathTracingDenoiseAtrous2.cso;$(CompiledShaderDir)PathTracingDenoiseAtrous3.cso;$(CompiledShaderDir)PathTracingDenoiseAtrous4.cso;$(CompiledShaderDir)PathTracingDenoiseComposite.cso">
+    <MakeDir Directories="$(CompiledShaderDir)" />
+    <Error Condition="!Exists('$(DxcExe)')" Text="DXC was not found at $(DxcExe). Restore NuGet packages first." />
+    <PropertyGroup>
+      <DxcCommon>-HV 2021 -I &quot;$(ProjectDir)Shaders&quot;</DxcCommon>
+      <DxcDebug Condition="'$(Configuration)'=='Debug'">-Zi -Qembed_debug -Od</DxcDebug>
+      <DxcDebug Condition="'$(Configuration)'!='Debug'">-O3</DxcDebug>
+    </PropertyGroup>
+    <Exec Command="&quot;$(DxcExe)&quot; $(DxcCommon) $(DxcDebug) -T lib_6_6 -Fo &quot;$(CompiledShaderDir)PathTracing.lib.cso&quot; &quot;$(ProjectDir)Shaders\PathTracing.hlsl&quot;" />
+    <Exec Command="&quot;$(DxcExe)&quot; $(DxcCommon) $(DxcDebug) -T lib_6_6 -Fo &quot;$(CompiledShaderDir)PathTracingReSTIR.lib.cso&quot; &quot;$(ProjectDir)Shaders\PathTracingReSTIR.hlsl&quot;" />
+    <Exec Command="&quot;$(DxcExe)&quot; $(DxcCommon) $(DxcDebug) -T lib_6_6 -Fo &quot;$(CompiledShaderDir)PathTracingReSTIRDI.lib.cso&quot; &quot;$(ProjectDir)Shaders\PathTracingReSTIRDI.hlsl&quot;" />
+    <Exec Command="&quot;$(DxcExe)&quot; $(DxcCommon) $(DxcDebug) -T lib_6_6 -Fo &quot;$(CompiledShaderDir)PathTracingReSTIRCombined.lib.cso&quot; &quot;$(ProjectDir)Shaders\PathTracingReSTIRCombined.hlsl&quot;" />
+    <Exec Command="&quot;$(DxcExe)&quot; $(DxcCommon) $(DxcDebug) -E RestirTemporalSpatialCS -T cs_6_6 -Fo &quot;$(CompiledShaderDir)ReSTIRResolve.cso&quot; &quot;$(ProjectDir)Shaders\ReSTIRResolve.hlsl&quot;" />
+    <Exec Command="&quot;$(DxcExe)&quot; $(DxcCommon) $(DxcDebug) -E RestirTemporalSpatialDICS -T cs_6_6 -Fo &quot;$(CompiledShaderDir)ReSTIRResolveDI.cso&quot; &quot;$(ProjectDir)Shaders\ReSTIRResolve.hlsl&quot;" />
+    <Exec Command="&quot;$(DxcExe)&quot; $(DxcCommon) $(DxcDebug) -E DenoiseTemporalCS -T cs_6_6 -Fo &quot;$(CompiledShaderDir)PathTracingDenoiseTemporal.cso&quot; &quot;$(ProjectDir)Shaders\PathTracingDenoise.hlsl&quot;" />
+    <Exec Command="&quot;$(DxcExe)&quot; $(DxcCommon) $(DxcDebug) -E DenoiseAtrous0CS -T cs_6_6 -Fo &quot;$(CompiledShaderDir)PathTracingDenoiseAtrous0.cso&quot; &quot;$(ProjectDir)Shaders\PathTracingDenoise.hlsl&quot;" />
+    <Exec Command="&quot;$(DxcExe)&quot; $(DxcCommon) $(DxcDebug) -E DenoiseAtrous1CS -T cs_6_6 -Fo &quot;$(CompiledShaderDir)PathTracingDenoiseAtrous1.cso&quot; &quot;$(ProjectDir)Shaders\PathTracingDenoise.hlsl&quot;" />
+    <Exec Command="&quot;$(DxcExe)&quot; $(DxcCommon) $(DxcDebug) -E DenoiseAtrous2CS -T cs_6_6 -Fo &quot;$(CompiledShaderDir)PathTracingDenoiseAtrous2.cso&quot; &quot;$(ProjectDir)Shaders\PathTracingDenoise.hlsl&quot;" />
+    <Exec Command="&quot;$(DxcExe)&quot; $(DxcCommon) $(DxcDebug) -E DenoiseAtrous3CS -T cs_6_6 -Fo &quot;$(CompiledShaderDir)PathTracingDenoiseAtrous3.cso&quot; &quot;$(ProjectDir)Shaders\PathTracingDenoise.hlsl&quot;" />
+    <Exec Command="&quot;$(DxcExe)&quot; $(DxcCommon) $(DxcDebug) -E DenoiseAtrous4CS -T cs_6_6 -Fo &quot;$(CompiledShaderDir)PathTracingDenoiseAtrous4.cso&quot; &quot;$(ProjectDir)Shaders\PathTracingDenoise.hlsl&quot;" />
+    <Exec Command="&quot;$(DxcExe)&quot; $(DxcCommon) $(DxcDebug) -E DenoiseCompositeCS -T cs_6_6 -Fo &quot;$(CompiledShaderDir)PathTracingDenoiseComposite.cso&quot; &quot;$(ProjectDir)Shaders\PathTracingDenoise.hlsl&quot;" />
+  </Target>
+  <Target Name="CopyAgilitySdk" AfterTargets="Build">
+    <MakeDir Directories="$(OutDir)D3D12" />
+    <Error Condition="!Exists('$(AgilitySdkBinDir)D3D12Core.dll')" Text="D3D12 Agility SDK DLLs were not found at $(AgilitySdkBinDir). Restore NuGet packages first." />
+    <Copy SourceFiles="$(AgilitySdkBinDir)D3D12Core.dll;$(AgilitySdkBinDir)d3d12SDKLayers.dll" DestinationFolder="$(OutDir)D3D12\" SkipUnchangedFiles="true" />
+  </Target>
+</Project>

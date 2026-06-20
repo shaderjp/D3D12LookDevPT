@@ -32,6 +32,8 @@ Changing the display resolution resizes the DXGI swapchain, RTVs, DXR output, ac
 
 The dockable `MCP Server` panel can start a localhost MCP endpoint at `http://127.0.0.1:<port>/mcp`. The server is disabled by default, uses a bearer token stored in `%APPDATA%\D3D12LookDevPT\settings.json`, and supports read-only, confirm-mutations, and allow-mutations access modes. MCP mutations are queued onto the main thread before they touch D3D12 or ImGui state.
 
+See [MCP Server](docs/mcp.md) for VS Code configuration, JSON-RPC examples, tools/resources, and troubleshooting.
+
 ## Build
 
 Clone submodules before building:

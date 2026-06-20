@@ -126,6 +126,8 @@ WASD / QE / Shift による camera 移動は、D3D12LookDevPT の window が for
 
 MCP request は server thread から D3D12 / ImGui state に直接触れません。mutation は main thread queue に積まれ、`OnUpdate()` の安全なタイミングで実行されます。
 
+VS Code 設定、JSON-RPC 例、tools/resources、troubleshooting は [MCP サーバー詳細](docs/mcp.ja.md) を参照してください。
+
 起動時に MCP server を明示的に start することもできます。
 
 ```powershell

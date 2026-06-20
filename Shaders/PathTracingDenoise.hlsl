@@ -36,6 +36,7 @@ struct SceneConstants
     float4 restirStabilityOptions;
     float4 signalDenoiseOptions;
     float4 denoisePassOptions;
+    float4 stabilityOptions;
 };
 
 struct RestirReservoir
@@ -145,7 +146,7 @@ bool FindHistoryPixel(uint2 pixel, uint2 dimensions, float4 centerAov0, float4 c
     bestPixel = basePixel;
     bestScore = 1e20f;
 
-    if (g_scene.frameOptions.w <= 0.5f)
+    if (g_scene.stabilityOptions.w <= 0.5f)
     {
         return false;
     }
@@ -182,6 +183,64 @@ bool FindHistoryPixel(uint2 pixel, uint2 dimensions, float4 centerAov0, float4 c
     }
 
     return found;
+}
+
+void CurrentNeighborhoodBounds(uint2 pixel, uint2 dimensions, out float3 lowValue, out float3 highValue)
+{
+    float3 center = CurrentSignal(pixel);
+    lowValue = center;
+    highValue = center;
+    int2 centerPixel = int2(pixel);
+
+    [unroll]
+    for (int y = -1; y <= 1; ++y)
+    {
+        [unroll]
+        for (int x = -1; x <= 1; ++x)
+        {
+            int2 samplePixel = clamp(centerPixel + int2(x, y), int2(0, 0), int2((int)dimensions.x, (int)dimensions.y) - int2(1, 1));
+            float3 sampleColor = CurrentSignal(uint2(samplePixel));
+            lowValue = min(lowValue, sampleColor);
+            highValue = max(highValue, sampleColor);
+        }
+    }
+}
+
+float3 ClampHistoryToNeighborhood(uint2 pixel, uint2 dimensions, float3 history)
+{
+    if (g_scene.stabilityOptions.x < 0.5f)
+    {
+        return history;
+    }
+
+    float3 lowValue;
+    float3 highValue;
+    CurrentNeighborhoodBounds(pixel, dimensions, lowValue, highValue);
+    float3 extent = max(highValue - lowValue, 0.03f.xxx);
+    return clamp(history, lowValue - extent * 0.35f, highValue + extent * 0.35f);
+}
+
+float ComputeHistoryConfidence(bool validHistory, float historyScore, float4 currentAov0, float4 currentAov1, float4 currentAov2,
+    float4 historyAov0, float4 historyAov1, float4 historyAov2, float currentLum, float previousLum)
+{
+    if (!validHistory)
+    {
+        return 0.0f;
+    }
+
+    float normalDot = dot(DecodeNormal(currentAov0), DecodeNormal(historyAov0));
+    float normalConfidence = saturate((normalDot - g_scene.validationOptions.x) / max(1.0f - g_scene.validationOptions.x, 0.001f));
+    float depthDelta = abs(currentAov0.w - historyAov0.w) / max(currentAov0.w, 1.0f);
+    float depthConfidence = saturate(1.0f - depthDelta / max(g_scene.validationOptions.y, 0.001f));
+    float albedoDelta = length(currentAov1.rgb - historyAov1.rgb);
+    float albedoConfidence = saturate(1.0f - albedoDelta / max(g_scene.validationOptions.z, 0.001f));
+    float roughnessDelta = abs(currentAov1.w - historyAov1.w);
+    float roughnessConfidence = saturate(1.0f - roughnessDelta / max(g_scene.validationOptions.w, 0.001f));
+    float motionConfidence = saturate(1.0f - length(currentAov2.xy) * 32.0f);
+    float luminanceDelta = abs(currentLum - previousLum) / max(max(currentLum, previousLum), 1.0f);
+    float luminanceConfidence = saturate(1.0f - luminanceDelta / max(g_scene.signalDenoiseOptions.z, 0.05f));
+    float scoreConfidence = saturate(1.0f - historyScore * 0.25f);
+    return normalConfidence * depthConfidence * albedoConfidence * roughnessConfidence * motionConfidence * luminanceConfidence * scoreConfidence;
 }
 
 float3 ApplyHistoryClamp(float3 current, float3 history, float variance, float historyLength)
@@ -252,7 +311,11 @@ void DenoiseTemporalCS(uint3 dispatchThreadId : SV_DispatchThreadID)
     float4 previousMoments = validHistory ? g_reconstructionHistoryMoments[uint2(historyPixel)] : 0.0f.xxxx;
     float previousVariance = validHistory ? max(previousMoments.z, 0.0f) : currentLum * currentLum;
     float previousLum = Luminance(reprojectedHistory);
-    float reactive = (disoccluded > 0.5f || abs(currentLum - previousLum) > max(previousLum, 1.0f) * g_scene.signalDenoiseOptions.z) ? 1.0f : 0.0f;
+    float4 historyAov0 = validHistory ? g_previousDenoiseAov0[uint2(historyPixel)] : centerAov0;
+    float4 historyAov1 = validHistory ? g_previousDenoiseAov1[uint2(historyPixel)] : centerAov1;
+    float4 historyAov2 = validHistory ? g_previousDenoiseAov2[uint2(historyPixel)] : centerAov2;
+    float historyConfidence = ComputeHistoryConfidence(validHistory, historyScore, centerAov0, centerAov1, centerAov2, historyAov0, historyAov1, historyAov2, currentLum, previousLum);
+    float reactive = (disoccluded > 0.5f || historyConfidence < 0.25f || abs(currentLum - previousLum) > max(previousLum, 1.0f) * g_scene.signalDenoiseOptions.z) ? 1.0f : 0.0f;
 
     float maxHistoryFrames = max(g_scene.reconstructionOptions.y, 1.0f);
     float historyFactor = saturate(historyLength / maxHistoryFrames);
@@ -260,6 +323,8 @@ void DenoiseTemporalCS(uint3 dispatchThreadId : SV_DispatchThreadID)
     alpha = lerp(alpha, max(alpha, 0.65f), reactive);
     float roughness = saturate(centerAov1.w);
     alpha = lerp(max(alpha, g_scene.signalDenoiseOptions.w), alpha, roughness);
+    alpha = lerp(max(alpha, 0.85f), alpha, historyConfidence);
+    alpha = max(alpha, saturate(g_scene.stabilityOptions.y * 0.55f));
 
     if (g_scene.reconstructionOptions.x < 0.5f)
     {
@@ -269,8 +334,9 @@ void DenoiseTemporalCS(uint3 dispatchThreadId : SV_DispatchThreadID)
         reactive = 1.0f;
     }
 
-    float3 clampedCurrent = ApplyHistoryClamp(currentColor, reprojectedHistory, previousVariance, historyLength);
-    float3 temporal = lerp(reprojectedHistory, clampedCurrent, saturate(alpha));
+    float3 clampedHistory = ClampHistoryToNeighborhood(pixel, dimensions, reprojectedHistory);
+    float3 clampedCurrent = ApplyHistoryClamp(currentColor, clampedHistory, previousVariance, historyLength);
+    float3 temporal = lerp(clampedHistory, clampedCurrent, saturate(alpha));
 
     float previousMean = validHistory ? previousMoments.x : currentLum;
     float previousMean2 = validHistory ? previousMoments.y : currentLum * currentLum;
@@ -282,7 +348,7 @@ void DenoiseTemporalCS(uint3 dispatchThreadId : SV_DispatchThreadID)
 
     g_denoisePing[pixel] = float4(temporal, 1.0f);
     g_reconstructionHistoryRadiance[pixel] = float4(temporal, 1.0f);
-    g_reconstructionHistoryMoments[pixel] = float4(mean, mean2, variance, reactive);
+    g_reconstructionHistoryMoments[pixel] = float4(mean, mean2, variance, historyConfidence);
     g_reconstructionHistoryLength[pixel] = float4(historyLength, disoccluded, historyMatch, reactive);
 }
 
@@ -444,6 +510,7 @@ void DenoiseCompositeCS(uint3 dispatchThreadId : SV_DispatchThreadID)
     if (debugMode == 37u) filtered = LoadFinalAtrous(pixel);
     if (debugMode == 38u) filtered = historyLength.w.xxx;
     if (debugMode == 39u) filtered = historyLength.z.xxx;
+    if (debugMode == 40u) filtered = g_reconstructionHistoryMoments[pixel].w.xxx;
 
     g_previousDenoiseAov0[pixel] = g_denoiseAov0[pixel];
     g_previousDenoiseAov1[pixel] = g_denoiseAov1[pixel];

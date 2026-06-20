@@ -37,6 +37,20 @@ public:
     void OnWindowMessage(UINT message, WPARAM wParam, LPARAM lParam);
     void ParseCommandLineArgs(_In_reads_(argc) WCHAR* argv[], int argc) override;
 
+    enum class NoisePreset
+    {
+        InteractiveStable,
+        SharpPreview,
+        StillCapture,
+    };
+
+    enum class JitterMode
+    {
+        Stable16,
+        Halton,
+        Off,
+    };
+
 private:
     static const UINT FrameCount = 2;
     static const UINT TextureSlotCount = Bistro::TextureSlotCount;
@@ -126,6 +140,7 @@ private:
         XMFLOAT4 restirStabilityOptions;
         XMFLOAT4 signalDenoiseOptions;
         XMFLOAT4 denoisePassOptions;
+        XMFLOAT4 stabilityOptions;
     };
 
     struct GpuTexture
@@ -285,11 +300,15 @@ private:
     float m_denoiserAlbedoSigma = 0.35f;
     float m_denoiserStrength = 0.85f;
     bool m_splitSignalDenoise = true;
+    NoisePreset m_noisePreset = NoisePreset::InteractiveStable;
+    bool m_temporalStabilityEnabled = true;
     float m_historyClampSigma = 1.5f;
     float m_reactiveThreshold = 0.35f;
     float m_specularHistoryScale = 0.45f;
     bool m_realtimeReconstruction = true;
     bool m_cameraJitter = true;
+    JitterMode m_jitterMode = JitterMode::Stable16;
+    float m_movingJitterScale = 0.25f;
     int m_reconstructionMaxHistoryFrames = 32;
     float m_temporalAlphaMin = 0.04f;
     float m_temporalAlphaMax = 0.22f;
@@ -323,6 +342,14 @@ private:
     bool m_hasPreviousViewProjection = false;
     XMFLOAT2 m_currentJitter = XMFLOAT2(0.0f, 0.0f);
     XMFLOAT2 m_previousJitter = XMFLOAT2(0.0f, 0.0f);
+    float m_currentJitterStrength = 1.0f;
+    float m_cameraMotionAmount = 0.0f;
+    uint32_t m_framesSinceCameraMotion = 0;
+    bool m_cameraMotionTrackingInitialized = false;
+    bool m_denoiseHistoryValid = false;
+    bool m_resetDenoiseHistoryRequested = true;
+    XMFLOAT4 m_previousCameraMotionState = XMFLOAT4(0, 0, 0, 0);
+    float m_previousCameraMotionPitch = 0.0f;
     XMFLOAT4 m_lastCameraAndYaw = XMFLOAT4(0, 0, 0, 0);
     XMFLOAT4 m_lastLighting = XMFLOAT4(0, 0, 0, 0);
     XMFLOAT4 m_lastGiOptions = XMFLOAT4(0, 0, 0, 0);
@@ -391,6 +418,10 @@ private:
     void ResetCameraView();
     void ResetCameraSpeeds();
     void ResetAccumulation();
+    void ResetDenoiseHistory();
+    void ResetRenderingHistory();
+    void ApplyNoisePreset(NoisePreset preset);
+    void UpdateCameraMotionState();
     bool HasAccumulationStateChanged();
     UINT CreateTextureResource(const std::wstring& path, bool srgb, const uint8_t fallback[4], std::map<std::wstring, UINT>& cache);
     ComPtr<ID3D12Resource> CreateDefaultBuffer(const void* data, UINT64 size, D3D12_RESOURCE_FLAGS flags, D3D12_RESOURCE_STATES finalState, const wchar_t* name);

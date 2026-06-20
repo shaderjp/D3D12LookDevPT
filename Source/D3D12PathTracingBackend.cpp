@@ -211,6 +211,98 @@ namespace
         return fallback;
     }
 
+    const char* NoisePresetName(D3D12PathTracingBackend::NoisePreset preset)
+    {
+        switch (preset)
+        {
+        case D3D12PathTracingBackend::NoisePreset::SharpPreview:
+            return "sharp_preview";
+        case D3D12PathTracingBackend::NoisePreset::StillCapture:
+            return "still_capture";
+        default:
+            return "interactive_stable";
+        }
+    }
+
+    const char* NoisePresetDisplayName(D3D12PathTracingBackend::NoisePreset preset)
+    {
+        switch (preset)
+        {
+        case D3D12PathTracingBackend::NoisePreset::SharpPreview:
+            return "Sharp Preview";
+        case D3D12PathTracingBackend::NoisePreset::StillCapture:
+            return "Still Capture";
+        default:
+            return "Interactive Stable";
+        }
+    }
+
+    bool TryParseNoisePreset(const std::string& name, D3D12PathTracingBackend::NoisePreset& preset)
+    {
+        if (name.empty() || name == "interactive_stable" || name == "Interactive Stable")
+        {
+            preset = D3D12PathTracingBackend::NoisePreset::InteractiveStable;
+            return true;
+        }
+        if (name == "sharp_preview" || name == "Sharp Preview")
+        {
+            preset = D3D12PathTracingBackend::NoisePreset::SharpPreview;
+            return true;
+        }
+        if (name == "still_capture" || name == "Still Capture")
+        {
+            preset = D3D12PathTracingBackend::NoisePreset::StillCapture;
+            return true;
+        }
+        return false;
+    }
+
+    const char* JitterModeName(D3D12PathTracingBackend::JitterMode mode)
+    {
+        switch (mode)
+        {
+        case D3D12PathTracingBackend::JitterMode::Halton:
+            return "halton";
+        case D3D12PathTracingBackend::JitterMode::Off:
+            return "off";
+        default:
+            return "stable16";
+        }
+    }
+
+    const char* JitterModeDisplayName(D3D12PathTracingBackend::JitterMode mode)
+    {
+        switch (mode)
+        {
+        case D3D12PathTracingBackend::JitterMode::Halton:
+            return "Halton";
+        case D3D12PathTracingBackend::JitterMode::Off:
+            return "Off";
+        default:
+            return "Stable16";
+        }
+    }
+
+    bool TryParseJitterMode(const std::string& name, D3D12PathTracingBackend::JitterMode& mode)
+    {
+        if (name.empty() || name == "stable16" || name == "Stable16")
+        {
+            mode = D3D12PathTracingBackend::JitterMode::Stable16;
+            return true;
+        }
+        if (name == "halton" || name == "Halton")
+        {
+            mode = D3D12PathTracingBackend::JitterMode::Halton;
+            return true;
+        }
+        if (name == "off" || name == "Off" || name == "none")
+        {
+            mode = D3D12PathTracingBackend::JitterMode::Off;
+            return true;
+        }
+        return false;
+    }
+
     std::array<float, 4> Float4ToArray(const XMFLOAT4& value)
     {
         return { value.x, value.y, value.z, value.w };
@@ -762,7 +854,7 @@ void D3D12PathTracingBackend::CreateGpuResourcesForCurrentScene()
     m_commandQueue->ExecuteCommandLists(_countof(commandLists), commandLists);
     WaitForPreviousFrame();
     m_uploadBuffers.clear();
-    ResetAccumulation();
+    ResetRenderingHistory();
     LogDiagnostic("CreateGpuResourcesForCurrentScene: complete.");
 }
 
@@ -870,9 +962,36 @@ bool D3D12PathTracingBackend::SaveProjectToDisk(const std::wstring& path)
              << "}" << (i + 1 < m_scene.materials.size() ? "," : "") << "\n";
     }
     file << "  ],\n";
-    file << "  \"pathTracing\": {\"samplesPerFrame\": " << m_giSamplesPerFrame << ", \"maxBounces\": " << m_maxPathBounces << ", \"minBounces\": " << m_minPathBounces << ", \"radianceClamp\": " << m_giRadianceClamp << "},\n";
-    file << "  \"restir\": {\"temporalReuse\": " << (m_restirTemporalReuse ? "true" : "false") << ", \"spatialReusePasses\": " << m_restirSpatialReusePasses << ", \"spatialRadius\": " << m_restirSpatialRadius << ", \"mClamp\": " << m_restirMClamp << "},\n";
-    file << "  \"denoise\": {\"enabled\": " << (m_denoiserEnabled ? "true" : "false") << ", \"atrousPasses\": " << m_atrousPassCount << ", \"strength\": " << m_denoiserStrength << "},\n";
+    file << "  \"pathTracing\": {\"samplesPerFrame\": " << m_giSamplesPerFrame << ", \"maxBounces\": " << m_maxPathBounces << ", \"minBounces\": " << m_minPathBounces
+         << ", \"radianceClamp\": " << m_giRadianceClamp << ", \"temporalClamp\": " << m_giTemporalClampScale
+         << ", \"maxAccumSamples\": " << m_maxAccumulatedFrames << ", \"adaptiveSampling\": " << (m_adaptiveSamplingEnabled ? "true" : "false")
+         << ", \"maxAdaptiveSPP\": " << m_maxAdaptiveSamplesPerPixel << ", \"varianceThreshold\": " << m_adaptiveVarianceThreshold
+         << ", \"disocclusionBoost\": " << m_adaptiveDisocclusionBoost << "},\n";
+    file << "  \"restir\": {\"temporalReuse\": " << (m_restirTemporalReuse ? "true" : "false") << ", \"spatialReusePasses\": " << m_restirSpatialReusePasses
+         << ", \"spatialRadius\": " << m_restirSpatialRadius << ", \"candidateSamples\": " << m_restirCandidateSamples << ", \"mClamp\": " << m_restirMClamp
+         << ", \"diTemporalReuse\": " << (m_restirDiTemporalReuse ? "true" : "false") << ", \"diSpatialReusePasses\": " << m_restirDiSpatialReusePasses
+         << ", \"diCandidateSamples\": " << m_restirDiCandidateSamples << ", \"diMClamp\": " << m_restirDiMClamp
+         << ", \"reservoirReprojection\": " << (m_reservoirReprojection ? "true" : "false")
+         << ", \"reservoirValidation\": " << (m_reservoirValidation ? "true" : "false")
+         << ", \"giValidationRay\": " << (m_restirGiValidationRay ? "true" : "false")
+         << ", \"reservoirMaxAge\": " << m_reservoirMaxAge << "},\n";
+    file << "  \"denoise\": {\"preset\": \"" << NoisePresetName(m_noisePreset) << "\", \"enabled\": " << (m_denoiserEnabled ? "true" : "false")
+         << ", \"splitSignalDenoise\": " << (m_splitSignalDenoise ? "true" : "false")
+         << ", \"realtimeReconstruction\": " << (m_realtimeReconstruction ? "true" : "false")
+         << ", \"cameraJitter\": " << (m_cameraJitter ? "true" : "false")
+         << ", \"temporalStability\": " << (m_temporalStabilityEnabled ? "true" : "false")
+         << ", \"jitterMode\": \"" << JitterModeName(m_jitterMode) << "\""
+         << ", \"movingJitterScale\": " << m_movingJitterScale
+         << ", \"maxHistoryFrames\": " << m_reconstructionMaxHistoryFrames
+         << ", \"temporalAlphaMin\": " << m_temporalAlphaMin << ", \"temporalAlphaMax\": " << m_temporalAlphaMax
+         << ", \"historyClampSigma\": " << m_historyClampSigma << ", \"reactiveThreshold\": " << m_reactiveThreshold
+         << ", \"specularHistoryScale\": " << m_specularHistoryScale
+         << ", \"spatialIterations\": " << m_denoiserSpatialIterations << ", \"atrousPasses\": " << m_atrousPassCount
+         << ", \"diffuseFilterStrength\": " << m_atrousDiffuseStrength << ", \"specularFilterStrength\": " << m_atrousSpecularStrength
+         << ", \"varianceScale\": " << m_atrousVarianceScale
+         << ", \"normalSigma\": " << m_denoiserNormalSigma << ", \"depthSigma\": " << m_denoiserDepthSigma
+         << ", \"luminanceSigma\": " << m_denoiserLuminanceSigma << ", \"albedoSigma\": " << m_denoiserAlbedoSigma
+         << ", \"strength\": " << m_denoiserStrength << "},\n";
     file << "  \"view\": {\"debugView\": " << m_debugViewMode << ", \"environmentEnabled\": " << (m_environmentMapEnabled ? "true" : "false") << "}\n";
     file << "}\n";
     m_projectPath = path;
@@ -985,23 +1104,77 @@ bool D3D12PathTracingBackend::LoadProjectFromDisk(const std::wstring& path, std:
             m_maxPathBounces = std::clamp(static_cast<int>(cld::JsonNumberOr(*pathTracing, "maxBounces", m_maxPathBounces)), 1, 8);
             m_minPathBounces = std::clamp(static_cast<int>(cld::JsonNumberOr(*pathTracing, "minBounces", m_minPathBounces)), 0, m_maxPathBounces);
             m_giRadianceClamp = std::clamp(static_cast<float>(cld::JsonNumberOr(*pathTracing, "radianceClamp", m_giRadianceClamp)), 1.0f, 100.0f);
+            m_giTemporalClampScale = std::clamp(static_cast<float>(cld::JsonNumberOr(*pathTracing, "temporalClamp", m_giTemporalClampScale)), 0.25f, 4.0f);
+            m_maxAccumulatedFrames = std::clamp(static_cast<int>(cld::JsonNumberOr(*pathTracing, "maxAccumSamples", m_maxAccumulatedFrames)), 1, 4096);
+            m_adaptiveSamplingEnabled = cld::JsonBoolOr(*pathTracing, "adaptiveSampling", m_adaptiveSamplingEnabled);
+            m_maxAdaptiveSamplesPerPixel = std::clamp(static_cast<int>(cld::JsonNumberOr(*pathTracing, "maxAdaptiveSPP", m_maxAdaptiveSamplesPerPixel)), 1, 4);
+            m_adaptiveVarianceThreshold = std::clamp(static_cast<float>(cld::JsonNumberOr(*pathTracing, "varianceThreshold", m_adaptiveVarianceThreshold)), 0.02f, 1.0f);
+            m_adaptiveDisocclusionBoost = std::clamp(static_cast<float>(cld::JsonNumberOr(*pathTracing, "disocclusionBoost", m_adaptiveDisocclusionBoost)), 0.0f, 4.0f);
         }
         if (const cld::JsonValue* restir = cld::FindMember(root, "restir"))
         {
             m_restirTemporalReuse = cld::JsonBoolOr(*restir, "temporalReuse", m_restirTemporalReuse);
             m_restirSpatialReusePasses = std::clamp(static_cast<int>(cld::JsonNumberOr(*restir, "spatialReusePasses", m_restirSpatialReusePasses)), 0, 4);
             m_restirSpatialRadius = std::clamp(static_cast<int>(cld::JsonNumberOr(*restir, "spatialRadius", m_restirSpatialRadius)), 1, 64);
+            m_restirCandidateSamples = std::clamp(static_cast<int>(cld::JsonNumberOr(*restir, "candidateSamples", m_restirCandidateSamples)), 1, 4);
             m_restirMClamp = std::clamp(static_cast<float>(cld::JsonNumberOr(*restir, "mClamp", m_restirMClamp)), 1.0f, 64.0f);
+            m_restirDiTemporalReuse = cld::JsonBoolOr(*restir, "diTemporalReuse", m_restirDiTemporalReuse);
+            m_restirDiSpatialReusePasses = std::clamp(static_cast<int>(cld::JsonNumberOr(*restir, "diSpatialReusePasses", m_restirDiSpatialReusePasses)), 0, 4);
+            m_restirDiCandidateSamples = std::clamp(static_cast<int>(cld::JsonNumberOr(*restir, "diCandidateSamples", m_restirDiCandidateSamples)), 1, 4);
+            m_restirDiMClamp = std::clamp(static_cast<float>(cld::JsonNumberOr(*restir, "diMClamp", m_restirDiMClamp)), 1.0f, 64.0f);
+            m_reservoirReprojection = cld::JsonBoolOr(*restir, "reservoirReprojection", m_reservoirReprojection);
+            m_reservoirValidation = cld::JsonBoolOr(*restir, "reservoirValidation", m_reservoirValidation);
+            m_restirGiValidationRay = cld::JsonBoolOr(*restir, "giValidationRay", m_restirGiValidationRay);
+            m_reservoirMaxAge = std::clamp(static_cast<int>(cld::JsonNumberOr(*restir, "reservoirMaxAge", m_reservoirMaxAge)), 1, 32);
         }
         if (const cld::JsonValue* denoise = cld::FindMember(root, "denoise"))
         {
+            if (const cld::JsonValue* presetValue = cld::FindMember(*denoise, "preset"))
+            {
+                NoisePreset preset = m_noisePreset;
+                if (presetValue->type != cld::JsonValue::Type::String || !TryParseNoisePreset(presetValue->string, preset))
+                {
+                    diagnostics = "Project denoise preset is invalid.";
+                    return false;
+                }
+                ApplyNoisePreset(preset);
+            }
+            if (const cld::JsonValue* jitterValue = cld::FindMember(*denoise, "jitterMode"))
+            {
+                JitterMode jitterMode = m_jitterMode;
+                if (jitterValue->type != cld::JsonValue::Type::String || !TryParseJitterMode(jitterValue->string, jitterMode))
+                {
+                    diagnostics = "Project denoise jitterMode is invalid.";
+                    return false;
+                }
+                m_jitterMode = jitterMode;
+            }
             m_denoiserEnabled = cld::JsonBoolOr(*denoise, "enabled", m_denoiserEnabled);
+            m_splitSignalDenoise = cld::JsonBoolOr(*denoise, "splitSignalDenoise", m_splitSignalDenoise);
+            m_realtimeReconstruction = cld::JsonBoolOr(*denoise, "realtimeReconstruction", m_realtimeReconstruction);
+            m_cameraJitter = cld::JsonBoolOr(*denoise, "cameraJitter", m_cameraJitter);
+            m_temporalStabilityEnabled = cld::JsonBoolOr(*denoise, "temporalStability", m_temporalStabilityEnabled);
+            m_movingJitterScale = std::clamp(static_cast<float>(cld::JsonNumberOr(*denoise, "movingJitterScale", m_movingJitterScale)), 0.0f, 1.0f);
+            m_reconstructionMaxHistoryFrames = std::clamp(static_cast<int>(cld::JsonNumberOr(*denoise, "maxHistoryFrames", m_reconstructionMaxHistoryFrames)), 1, 128);
+            m_temporalAlphaMin = std::clamp(static_cast<float>(cld::JsonNumberOr(*denoise, "temporalAlphaMin", m_temporalAlphaMin)), 0.01f, 0.5f);
+            m_temporalAlphaMax = std::clamp(static_cast<float>(cld::JsonNumberOr(*denoise, "temporalAlphaMax", m_temporalAlphaMax)), m_temporalAlphaMin, 0.8f);
+            m_historyClampSigma = std::clamp(static_cast<float>(cld::JsonNumberOr(*denoise, "historyClampSigma", m_historyClampSigma)), 0.5f, 4.0f);
+            m_reactiveThreshold = std::clamp(static_cast<float>(cld::JsonNumberOr(*denoise, "reactiveThreshold", m_reactiveThreshold)), 0.05f, 1.0f);
+            m_specularHistoryScale = std::clamp(static_cast<float>(cld::JsonNumberOr(*denoise, "specularHistoryScale", m_specularHistoryScale)), 0.0f, 1.0f);
+            m_denoiserSpatialIterations = std::clamp(static_cast<int>(cld::JsonNumberOr(*denoise, "spatialIterations", m_denoiserSpatialIterations)), 0, 4);
             m_atrousPassCount = std::clamp(static_cast<int>(cld::JsonNumberOr(*denoise, "atrousPasses", m_atrousPassCount)), 0, 5);
+            m_atrousDiffuseStrength = std::clamp(static_cast<float>(cld::JsonNumberOr(*denoise, "diffuseFilterStrength", m_atrousDiffuseStrength)), 0.0f, 1.0f);
+            m_atrousSpecularStrength = std::clamp(static_cast<float>(cld::JsonNumberOr(*denoise, "specularFilterStrength", m_atrousSpecularStrength)), 0.0f, 1.0f);
+            m_atrousVarianceScale = std::clamp(static_cast<float>(cld::JsonNumberOr(*denoise, "varianceScale", m_atrousVarianceScale)), 0.25f, 4.0f);
+            m_denoiserNormalSigma = std::clamp(static_cast<float>(cld::JsonNumberOr(*denoise, "normalSigma", m_denoiserNormalSigma)), 0.05f, 1.0f);
+            m_denoiserDepthSigma = std::clamp(static_cast<float>(cld::JsonNumberOr(*denoise, "depthSigma", m_denoiserDepthSigma)), 0.002f, 0.10f);
+            m_denoiserLuminanceSigma = std::clamp(static_cast<float>(cld::JsonNumberOr(*denoise, "luminanceSigma", m_denoiserLuminanceSigma)), 0.1f, 8.0f);
+            m_denoiserAlbedoSigma = std::clamp(static_cast<float>(cld::JsonNumberOr(*denoise, "albedoSigma", m_denoiserAlbedoSigma)), 0.05f, 1.0f);
             m_denoiserStrength = std::clamp(static_cast<float>(cld::JsonNumberOr(*denoise, "strength", m_denoiserStrength)), 0.0f, 1.0f);
         }
         if (const cld::JsonValue* view = cld::FindMember(root, "view"))
         {
-            m_debugViewMode = std::clamp(static_cast<int>(cld::JsonNumberOr(*view, "debugView", m_debugViewMode)), 0, 39);
+            m_debugViewMode = std::clamp(static_cast<int>(cld::JsonNumberOr(*view, "debugView", m_debugViewMode)), 0, 40);
             m_environmentMapEnabled = cld::JsonBoolOr(*view, "environmentEnabled", m_environmentMapEnabled);
         }
 
@@ -1011,7 +1184,7 @@ bool D3D12PathTracingBackend::LoadProjectFromDisk(const std::wstring& path, std:
         }
         m_projectPath = path;
         m_projectDirty = false;
-        ResetAccumulation();
+        ResetRenderingHistory();
         diagnostics = "Project loaded.";
         m_projectDiagnostics = diagnostics;
         return true;
@@ -1083,7 +1256,7 @@ bool D3D12PathTracingBackend::ApplyAction(const std::string& method, const cld::
         if (!validateOnly)
         {
             m_camera.Reset(XMFLOAT3(position[0], position[1], position[2]), yaw, pitch);
-            ResetAccumulation();
+            ResetRenderingHistory();
             m_projectDirty = true;
         }
         diagnostics = "Camera settings accepted.";
@@ -1196,7 +1369,7 @@ bool D3D12PathTracingBackend::ApplyAction(const std::string& method, const cld::
             m_emissiveLightIntensity = emissiveIntensity;
             m_proceduralLightsEnabled = cld::JsonBoolOr(params, "proceduralAreaLights", m_proceduralLightsEnabled);
             m_proceduralLightIntensity = areaLightIntensity;
-            ResetAccumulation();
+            ResetRenderingHistory();
             m_projectDirty = true;
         }
         diagnostics = "Lighting settings accepted.";
@@ -1240,7 +1413,7 @@ bool D3D12PathTracingBackend::ApplyAction(const std::string& method, const cld::
             }
             else
             {
-                ResetAccumulation();
+                ResetRenderingHistory();
             }
             m_projectDirty = true;
         }
@@ -1277,7 +1450,7 @@ bool D3D12PathTracingBackend::ApplyAction(const std::string& method, const cld::
             m_reservoirValidation = cld::JsonBoolOr(params, "reservoirValidation", m_reservoirValidation);
             m_restirGiValidationRay = cld::JsonBoolOr(params, "giValidationRay", m_restirGiValidationRay);
             m_reservoirMaxAge = reservoirMaxAge;
-            ResetAccumulation();
+            ResetRenderingHistory();
             m_projectDirty = true;
         }
         diagnostics = "ReSTIR settings accepted.";
@@ -1285,51 +1458,94 @@ bool D3D12PathTracingBackend::ApplyAction(const std::string& method, const cld::
     }
     if (method == "set_denoise")
     {
-        const int atrousPasses = std::clamp(static_cast<int>(cld::JsonNumberOr(params, "atrousPasses", m_atrousPassCount)), 0, 5);
-        const float strength = std::clamp(static_cast<float>(cld::JsonNumberOr(params, "strength", m_denoiserStrength)), 0.0f, 1.0f);
-        const int maxHistoryFrames = std::clamp(static_cast<int>(cld::JsonNumberOr(params, "maxHistoryFrames", m_reconstructionMaxHistoryFrames)), 1, 128);
-        const float temporalAlphaMin = std::clamp(static_cast<float>(cld::JsonNumberOr(params, "temporalAlphaMin", m_temporalAlphaMin)), 0.01f, 0.5f);
-        const float temporalAlphaMax = std::clamp(static_cast<float>(cld::JsonNumberOr(params, "temporalAlphaMax", m_temporalAlphaMax)), temporalAlphaMin, 0.8f);
-        const float historyClampSigma = std::clamp(static_cast<float>(cld::JsonNumberOr(params, "historyClampSigma", m_historyClampSigma)), 0.5f, 4.0f);
-        const float reactiveThreshold = std::clamp(static_cast<float>(cld::JsonNumberOr(params, "reactiveThreshold", m_reactiveThreshold)), 0.05f, 1.0f);
-        const float specularHistoryScale = std::clamp(static_cast<float>(cld::JsonNumberOr(params, "specularHistoryScale", m_specularHistoryScale)), 0.0f, 1.0f);
-        const int spatialIterations = std::clamp(static_cast<int>(cld::JsonNumberOr(params, "spatialIterations", m_denoiserSpatialIterations)), 0, 4);
-        const float diffuseFilterStrength = std::clamp(static_cast<float>(cld::JsonNumberOr(params, "diffuseFilterStrength", m_atrousDiffuseStrength)), 0.0f, 1.0f);
-        const float specularFilterStrength = std::clamp(static_cast<float>(cld::JsonNumberOr(params, "specularFilterStrength", m_atrousSpecularStrength)), 0.0f, 1.0f);
-        const float varianceScale = std::clamp(static_cast<float>(cld::JsonNumberOr(params, "varianceScale", m_atrousVarianceScale)), 0.25f, 4.0f);
-        const float normalSigma = std::clamp(static_cast<float>(cld::JsonNumberOr(params, "normalSigma", m_denoiserNormalSigma)), 0.05f, 1.0f);
-        const float depthSigma = std::clamp(static_cast<float>(cld::JsonNumberOr(params, "depthSigma", m_denoiserDepthSigma)), 0.002f, 0.10f);
-        const float luminanceSigma = std::clamp(static_cast<float>(cld::JsonNumberOr(params, "luminanceSigma", m_denoiserLuminanceSigma)), 0.1f, 8.0f);
-        const float albedoSigma = std::clamp(static_cast<float>(cld::JsonNumberOr(params, "albedoSigma", m_denoiserAlbedoSigma)), 0.05f, 1.0f);
+        NoisePreset preset = m_noisePreset;
+        bool hasPreset = false;
+        if (const cld::JsonValue* presetValue = cld::FindMember(params, "preset"))
+        {
+            if (presetValue->type != cld::JsonValue::Type::String || !TryParseNoisePreset(presetValue->string, preset))
+            {
+                diagnostics = "Denoise preset is invalid.";
+                return false;
+            }
+            hasPreset = true;
+        }
+
+        JitterMode jitterMode = m_jitterMode;
+        if (const cld::JsonValue* jitterValue = cld::FindMember(params, "jitterMode"))
+        {
+            if (jitterValue->type != cld::JsonValue::Type::String || !TryParseJitterMode(jitterValue->string, jitterMode))
+            {
+                diagnostics = "Denoise jitterMode is invalid.";
+                return false;
+            }
+        }
+
+        const float strength = static_cast<float>(cld::JsonNumberOr(params, "strength", m_denoiserStrength));
+        const float temporalAlphaMin = static_cast<float>(cld::JsonNumberOr(params, "temporalAlphaMin", m_temporalAlphaMin));
+        const float temporalAlphaMax = static_cast<float>(cld::JsonNumberOr(params, "temporalAlphaMax", m_temporalAlphaMax));
+        const float historyClampSigma = static_cast<float>(cld::JsonNumberOr(params, "historyClampSigma", m_historyClampSigma));
+        const float reactiveThreshold = static_cast<float>(cld::JsonNumberOr(params, "reactiveThreshold", m_reactiveThreshold));
+        const float specularHistoryScale = static_cast<float>(cld::JsonNumberOr(params, "specularHistoryScale", m_specularHistoryScale));
+        const float diffuseFilterStrength = static_cast<float>(cld::JsonNumberOr(params, "diffuseFilterStrength", m_atrousDiffuseStrength));
+        const float specularFilterStrength = static_cast<float>(cld::JsonNumberOr(params, "specularFilterStrength", m_atrousSpecularStrength));
+        const float varianceScale = static_cast<float>(cld::JsonNumberOr(params, "varianceScale", m_atrousVarianceScale));
+        const float normalSigma = static_cast<float>(cld::JsonNumberOr(params, "normalSigma", m_denoiserNormalSigma));
+        const float depthSigma = static_cast<float>(cld::JsonNumberOr(params, "depthSigma", m_denoiserDepthSigma));
+        const float luminanceSigma = static_cast<float>(cld::JsonNumberOr(params, "luminanceSigma", m_denoiserLuminanceSigma));
+        const float albedoSigma = static_cast<float>(cld::JsonNumberOr(params, "albedoSigma", m_denoiserAlbedoSigma));
+        const float movingJitterScale = static_cast<float>(cld::JsonNumberOr(params, "movingJitterScale", m_movingJitterScale));
+        const float maxHistoryFrames = static_cast<float>(cld::JsonNumberOr(params, "maxHistoryFrames", m_reconstructionMaxHistoryFrames));
+        const float spatialIterations = static_cast<float>(cld::JsonNumberOr(params, "spatialIterations", m_denoiserSpatialIterations));
+        const float atrousPasses = static_cast<float>(cld::JsonNumberOr(params, "atrousPasses", m_atrousPassCount));
         if (!AllFinite({ strength, temporalAlphaMin, temporalAlphaMax, historyClampSigma, reactiveThreshold, specularHistoryScale,
-            diffuseFilterStrength, specularFilterStrength, varianceScale, normalSigma, depthSigma, luminanceSigma, albedoSigma }))
+            diffuseFilterStrength, specularFilterStrength, varianceScale, normalSigma, depthSigma, luminanceSigma, albedoSigma,
+            movingJitterScale, maxHistoryFrames, spatialIterations, atrousPasses }))
         {
             diagnostics = "Denoise settings contain non-finite values.";
             return false;
         }
         if (!validateOnly)
         {
+            if (hasPreset)
+            {
+                ApplyNoisePreset(preset);
+            }
+            else
+            {
+                m_noisePreset = preset;
+            }
+
             m_denoiserEnabled = cld::JsonBoolOr(params, "enabled", m_denoiserEnabled);
             m_splitSignalDenoise = cld::JsonBoolOr(params, "splitSignalDenoise", m_splitSignalDenoise);
             m_realtimeReconstruction = cld::JsonBoolOr(params, "realtimeReconstruction", m_realtimeReconstruction);
             m_cameraJitter = cld::JsonBoolOr(params, "cameraJitter", m_cameraJitter);
-            m_reconstructionMaxHistoryFrames = maxHistoryFrames;
-            m_temporalAlphaMin = temporalAlphaMin;
-            m_temporalAlphaMax = temporalAlphaMax;
-            m_historyClampSigma = historyClampSigma;
-            m_reactiveThreshold = reactiveThreshold;
-            m_specularHistoryScale = specularHistoryScale;
-            m_denoiserSpatialIterations = spatialIterations;
-            m_atrousPassCount = atrousPasses;
-            m_atrousDiffuseStrength = diffuseFilterStrength;
-            m_atrousSpecularStrength = specularFilterStrength;
-            m_atrousVarianceScale = varianceScale;
-            m_denoiserNormalSigma = normalSigma;
-            m_denoiserDepthSigma = depthSigma;
-            m_denoiserLuminanceSigma = luminanceSigma;
-            m_denoiserAlbedoSigma = albedoSigma;
-            m_denoiserStrength = strength;
-            ResetAccumulation();
+            m_temporalStabilityEnabled = cld::JsonBoolOr(params, "temporalStability", m_temporalStabilityEnabled);
+            m_jitterMode = jitterMode;
+            m_movingJitterScale = std::clamp(static_cast<float>(cld::JsonNumberOr(params, "movingJitterScale", m_movingJitterScale)), 0.0f, 1.0f);
+            m_reconstructionMaxHistoryFrames = std::clamp(static_cast<int>(cld::JsonNumberOr(params, "maxHistoryFrames", m_reconstructionMaxHistoryFrames)), 1, 128);
+            m_temporalAlphaMin = std::clamp(static_cast<float>(cld::JsonNumberOr(params, "temporalAlphaMin", m_temporalAlphaMin)), 0.01f, 0.5f);
+            m_temporalAlphaMax = std::clamp(static_cast<float>(cld::JsonNumberOr(params, "temporalAlphaMax", m_temporalAlphaMax)), m_temporalAlphaMin, 0.8f);
+            m_historyClampSigma = std::clamp(static_cast<float>(cld::JsonNumberOr(params, "historyClampSigma", m_historyClampSigma)), 0.5f, 4.0f);
+            m_reactiveThreshold = std::clamp(static_cast<float>(cld::JsonNumberOr(params, "reactiveThreshold", m_reactiveThreshold)), 0.05f, 1.0f);
+            m_specularHistoryScale = std::clamp(static_cast<float>(cld::JsonNumberOr(params, "specularHistoryScale", m_specularHistoryScale)), 0.0f, 1.0f);
+            m_denoiserSpatialIterations = std::clamp(static_cast<int>(cld::JsonNumberOr(params, "spatialIterations", m_denoiserSpatialIterations)), 0, 4);
+            m_atrousPassCount = std::clamp(static_cast<int>(cld::JsonNumberOr(params, "atrousPasses", m_atrousPassCount)), 0, 5);
+            m_atrousDiffuseStrength = std::clamp(static_cast<float>(cld::JsonNumberOr(params, "diffuseFilterStrength", m_atrousDiffuseStrength)), 0.0f, 1.0f);
+            m_atrousSpecularStrength = std::clamp(static_cast<float>(cld::JsonNumberOr(params, "specularFilterStrength", m_atrousSpecularStrength)), 0.0f, 1.0f);
+            m_atrousVarianceScale = std::clamp(static_cast<float>(cld::JsonNumberOr(params, "varianceScale", m_atrousVarianceScale)), 0.25f, 4.0f);
+            m_denoiserNormalSigma = std::clamp(static_cast<float>(cld::JsonNumberOr(params, "normalSigma", m_denoiserNormalSigma)), 0.05f, 1.0f);
+            m_denoiserDepthSigma = std::clamp(static_cast<float>(cld::JsonNumberOr(params, "depthSigma", m_denoiserDepthSigma)), 0.002f, 0.10f);
+            m_denoiserLuminanceSigma = std::clamp(static_cast<float>(cld::JsonNumberOr(params, "luminanceSigma", m_denoiserLuminanceSigma)), 0.1f, 8.0f);
+            m_denoiserAlbedoSigma = std::clamp(static_cast<float>(cld::JsonNumberOr(params, "albedoSigma", m_denoiserAlbedoSigma)), 0.05f, 1.0f);
+            m_denoiserStrength = std::clamp(static_cast<float>(cld::JsonNumberOr(params, "strength", m_denoiserStrength)), 0.0f, 1.0f);
+            if (cld::JsonBoolOr(params, "resetHistory", true))
+            {
+                ResetRenderingHistory();
+            }
+            else
+            {
+                ResetAccumulation();
+            }
             m_projectDirty = true;
         }
         diagnostics = "Denoise settings accepted.";
@@ -1337,13 +1553,21 @@ bool D3D12PathTracingBackend::ApplyAction(const std::string& method, const cld::
     }
     if (method == "set_view")
     {
-        const int debugView = std::clamp(static_cast<int>(cld::JsonNumberOr(params, "debugView", m_debugViewMode)), 0, 39);
+        const int debugView = std::clamp(static_cast<int>(cld::JsonNumberOr(params, "debugView", m_debugViewMode)), 0, 40);
+        const bool changesEnvironment = cld::FindMember(params, "environmentEnabled") != nullptr;
         if (!validateOnly)
         {
             m_debugViewMode = debugView;
             m_debugNormalMapYFlip = cld::JsonBoolOr(params, "normalMapYFlip", m_debugNormalMapYFlip);
             m_environmentMapEnabled = cld::JsonBoolOr(params, "environmentEnabled", m_environmentMapEnabled);
-            ResetAccumulation();
+            if (changesEnvironment)
+            {
+                ResetRenderingHistory();
+            }
+            else
+            {
+                ResetAccumulation();
+            }
             m_projectDirty = true;
         }
         diagnostics = "View settings accepted.";
@@ -1691,10 +1915,17 @@ std::string D3D12PathTracingBackend::BuildMcpStateJson() const
         << ",\"reservoirValidation\":" << (m_reservoirValidation ? "true" : "false")
         << ",\"giValidationRay\":" << (m_restirGiValidationRay ? "true" : "false")
         << ",\"reservoirMaxAge\":" << m_reservoirMaxAge << "},";
-    out << "\"denoise\":{\"enabled\":" << (m_denoiserEnabled ? "true" : "false")
+    out << "\"denoise\":{\"preset\":\"" << NoisePresetName(m_noisePreset) << "\",\"presetLabel\":\"" << NoisePresetDisplayName(m_noisePreset)
+        << "\",\"enabled\":" << (m_denoiserEnabled ? "true" : "false")
         << ",\"splitSignalDenoise\":" << (m_splitSignalDenoise ? "true" : "false")
         << ",\"realtimeReconstruction\":" << (m_realtimeReconstruction ? "true" : "false")
         << ",\"cameraJitter\":" << (m_cameraJitter ? "true" : "false")
+        << ",\"temporalStability\":" << (m_temporalStabilityEnabled ? "true" : "false")
+        << ",\"jitterMode\":\"" << JitterModeName(m_jitterMode) << "\""
+        << ",\"movingJitterScale\":" << m_movingJitterScale
+        << ",\"currentJitterStrength\":" << m_currentJitterStrength
+        << ",\"cameraMotionAmount\":" << m_cameraMotionAmount
+        << ",\"temporalHistoryValid\":" << (m_denoiseHistoryValid && !m_resetDenoiseHistoryRequested ? "true" : "false")
         << ",\"maxHistoryFrames\":" << m_reconstructionMaxHistoryFrames
         << ",\"historyClampSigma\":" << m_historyClampSigma << ",\"reactiveThreshold\":" << m_reactiveThreshold
         << ",\"spatialIterations\":" << m_denoiserSpatialIterations << ",\"atrousPasses\":" << m_atrousPassCount
@@ -1734,7 +1965,11 @@ std::string D3D12PathTracingBackend::BuildMcpStatsJson() const
     out << "\"samplesAccumulated\":" << m_accumulatedFrames << ",";
     out << "\"activeMode\":\"" << PathtracingModeName(m_mode) << "\",";
     out << "\"reservoirCount\":" << m_restirReservoirElementCount << ",";
-    out << "\"denoiser\":{\"enabled\":" << (m_denoiserEnabled ? "true" : "false") << ",\"spatialIterations\":" << m_denoiserSpatialIterations << ",\"atrousPasses\":" << m_atrousPassCount << "},";
+    out << "\"denoiser\":{\"preset\":\"" << NoisePresetName(m_noisePreset) << "\",\"enabled\":" << (m_denoiserEnabled ? "true" : "false")
+        << ",\"temporalStability\":" << (m_temporalStabilityEnabled ? "true" : "false")
+        << ",\"historyValid\":" << (m_denoiseHistoryValid && !m_resetDenoiseHistoryRequested ? "true" : "false")
+        << ",\"jitterMode\":\"" << JitterModeName(m_jitterMode) << "\",\"jitterStrength\":" << m_currentJitterStrength
+        << ",\"spatialIterations\":" << m_denoiserSpatialIterations << ",\"atrousPasses\":" << m_atrousPassCount << "},";
     out << "\"mcp\":{\"running\":" << (m_mcpServer.IsRunning() ? "true" : "false") << ",\"pendingCommands\":" << m_mcpDispatcher.PendingCount() << "}";
     out << "}";
     return out.str();
@@ -2559,9 +2794,31 @@ void D3D12PathTracingBackend::UpdateConstantBuffer(float)
     XMMATRIX viewProjection = view * projection;
     XMMATRIX inverseViewProjection = XMMatrixInverse(nullptr, viewProjection);
 
+    UpdateCameraMotionState();
+
     const XMFLOAT4X4 previousViewProjection = m_previousViewProjection;
-    const uint32_t jitterIndex = (m_frameCounter & 1023u) + 1u;
-    m_currentJitter = m_cameraJitter ? XMFLOAT2(Halton(jitterIndex, 2) - 0.5f, Halton(jitterIndex, 3) - 0.5f) : XMFLOAT2(0.0f, 0.0f);
+    float jitterStrength = 1.0f;
+    if (m_temporalStabilityEnabled)
+    {
+        const float stopBlend = std::clamp(static_cast<float>(m_framesSinceCameraMotion) / 4.0f, 0.0f, 1.0f);
+        jitterStrength = m_cameraMotionAmount > 0.001f ? m_movingJitterScale : std::lerp(m_movingJitterScale, 1.0f, stopBlend);
+    }
+    if (!m_cameraJitter || m_jitterMode == JitterMode::Off)
+    {
+        jitterStrength = 0.0f;
+    }
+    m_currentJitterStrength = std::clamp(jitterStrength, 0.0f, 1.0f);
+
+    uint32_t jitterIndex = (m_frameCounter & 1023u) + 1u;
+    if (m_jitterMode == JitterMode::Stable16)
+    {
+        jitterIndex = (m_frameCounter & 15u) + 1u;
+    }
+    const XMFLOAT2 baseJitter(Halton(jitterIndex, 2) - 0.5f, Halton(jitterIndex, 3) - 0.5f);
+    m_currentJitter = m_currentJitterStrength > 0.0f
+        ? XMFLOAT2(baseJitter.x * m_currentJitterStrength, baseJitter.y * m_currentJitterStrength)
+        : XMFLOAT2(0.0f, 0.0f);
+    const bool temporalHistoryValid = m_temporalStabilityEnabled && m_denoiseHistoryValid && !m_resetDenoiseHistoryRequested;
 
     SceneConstantBuffer constants{};
     XMStoreFloat4x4(&constants.inverseViewProjection, inverseViewProjection);
@@ -2601,11 +2858,14 @@ void D3D12PathTracingBackend::UpdateConstantBuffer(float)
     constants.restirStabilityOptions = XMFLOAT4(m_reservoirReprojection ? 1.0f : 0.0f, m_reservoirValidation ? 1.0f : 0.0f, m_restirGiValidationRay ? 1.0f : 0.0f, static_cast<float>(m_reservoirMaxAge));
     constants.signalDenoiseOptions = XMFLOAT4(m_splitSignalDenoise ? 1.0f : 0.0f, m_historyClampSigma, m_reactiveThreshold, m_specularHistoryScale);
     constants.denoisePassOptions = XMFLOAT4(0.0f, static_cast<float>(m_atrousPassCount), 0.0f, 0.0f);
+    constants.stabilityOptions = XMFLOAT4(m_temporalStabilityEnabled ? 1.0f : 0.0f, m_cameraMotionAmount, m_currentJitterStrength, temporalHistoryValid ? 1.0f : 0.0f);
     memcpy(m_mappedSceneConstants, &constants, sizeof(constants));
 
     XMStoreFloat4x4(&m_previousViewProjection, viewProjection);
     m_hasPreviousViewProjection = true;
     m_previousJitter = m_currentJitter;
+    m_resetDenoiseHistoryRequested = false;
+    m_denoiseHistoryValid = true;
 
     if (!m_freezeAccumulation)
     {
@@ -2874,7 +3134,7 @@ void D3D12PathTracingBackend::BuildUI()
         "Denoise Delta", "Reservoir Age", "Reservoir Validity", "GI Reservoir Weight",
         "DI Reservoir Weight", "GI Temporal Reuse", "DI Temporal Reuse", "GI Spatial Reuse",
         "DI Spatial Reuse", "Direct Signal", "Indirect Signal", "Residual Signal", "Temporal Input",
-        "Temporal Output Detail", "A-Trous Output", "Reactive Mask", "History Match"
+        "Temporal Output Detail", "A-Trous Output", "Reactive Mask", "History Match", "History Confidence"
     };
 
     ImGui::SetNextWindowPos(ImVec2(24.0f, 48.0f), ImGuiCond_FirstUseEver);
@@ -2952,7 +3212,7 @@ void D3D12PathTracingBackend::BuildUI()
         ResetAccumulation();
         m_projectDirty = true;
     }
-    if (ImGui::Button("Reset Camera View")) { ResetCameraView(); ResetAccumulation(); m_projectDirty = true; }
+    if (ImGui::Button("Reset Camera View")) { ResetCameraView(); ResetRenderingHistory(); m_projectDirty = true; }
     if (ImGui::SliderFloat("Move Speed", &m_baseMoveSpeed, 0.1f, 50.0f, "%.1f")) m_camera.SetMoveSpeeds(m_baseMoveSpeed, m_fastMoveSpeed);
     if (ImGui::SliderFloat("Fast Speed", &m_fastMoveSpeed, 0.1f, 100.0f, "%.1f")) m_camera.SetMoveSpeeds(m_baseMoveSpeed, m_fastMoveSpeed);
     if (ImGui::Button("Reset Camera Speed")) ResetCameraSpeeds();
@@ -3028,29 +3288,34 @@ void D3D12PathTracingBackend::BuildUI()
     ImGui::SetNextWindowSize(ImVec2(430.0f, 430.0f), ImGuiCond_FirstUseEver);
     ImGui::Begin("Lighting");
     ImGui::PushItemWidth(240.0f);
-    if (ImGui::SliderFloat3("Light Direction", m_lightDirection, -1.0f, 1.0f)) { ResetAccumulation(); m_projectDirty = true; }
-    if (ImGui::ColorEdit3("Light Color", m_lightColor)) { ResetAccumulation(); m_projectDirty = true; }
-    if (ImGui::SliderFloat("Light Intensity", &m_lightIntensity, 0.0f, 20.0f, "%.2f")) { ResetAccumulation(); m_projectDirty = true; }
-    if (ImGui::Button("Reset Light")) { ResetLight(); ResetAccumulation(); m_projectDirty = true; }
+    auto resetLightingSettings = [&]()
+    {
+        ResetRenderingHistory();
+        m_projectDirty = true;
+    };
+    if (ImGui::SliderFloat3("Light Direction", m_lightDirection, -1.0f, 1.0f)) resetLightingSettings();
+    if (ImGui::ColorEdit3("Light Color", m_lightColor)) resetLightingSettings();
+    if (ImGui::SliderFloat("Light Intensity", &m_lightIntensity, 0.0f, 20.0f, "%.2f")) resetLightingSettings();
+    if (ImGui::Button("Reset Light")) { ResetLight(); resetLightingSettings(); }
     ImGui::Separator();
-    if (ImGui::SliderFloat("Ray Bias / TMin", &m_rayTMin, 0.001f, 0.25f, "%.3f")) ResetAccumulation();
-    if (ImGui::Checkbox("Sky Enabled", &m_skyEnabled)) ResetAccumulation();
-    if (ImGui::ColorEdit3("Sky Color", m_skyColor)) ResetAccumulation();
-    if (ImGui::ColorEdit3("Sky Horizon Color", m_skyHorizonColor)) ResetAccumulation();
-    if (ImGui::ColorEdit3("Sky Zenith Color", m_skyZenithColor)) ResetAccumulation();
-    if (ImGui::ColorEdit3("Sky Ground Color", m_skyGroundColor)) ResetAccumulation();
-    if (ImGui::SliderFloat("Sky Intensity", &m_skyIntensity, 0.0f, 10.0f, "%.2f")) ResetAccumulation();
-    if (ImGui::SliderFloat("Sun Intensity", &m_sunIntensity, 0.0f, 50.0f, "%.2f")) ResetAccumulation();
-    if (ImGui::SliderFloat("Sun Size", &m_sunAngularRadius, 0.001f, 0.08f, "%.3f")) ResetAccumulation();
-    if (ImGui::Checkbox("Environment Map", &m_environmentMapEnabled)) ResetAccumulation();
-    if (ImGui::SliderFloat("Environment Intensity", &m_environmentIntensity, 0.0f, 10.0f, "%.2f")) ResetAccumulation();
-    if (ImGui::SliderFloat("Environment Rotation", &m_environmentRotation, -3.14159f, 3.14159f, "%.2f")) ResetAccumulation();
-    if (ImGui::Checkbox("Sun NEE", &m_shadowEnabled)) ResetAccumulation();
-    if (ImGui::Checkbox("Sky NEE", &m_skyNeeEnabled)) ResetAccumulation();
-    if (ImGui::Checkbox("Emissive Triangle Lights", &m_emissiveLightsEnabled)) ResetAccumulation();
-    if (ImGui::SliderFloat("Emissive Intensity", &m_emissiveLightIntensity, 0.0f, 30.0f, "%.2f")) ResetAccumulation();
-    if (ImGui::Checkbox("Procedural Area Lights", &m_proceduralLightsEnabled)) ResetAccumulation();
-    if (ImGui::SliderFloat("Area Light Intensity", &m_proceduralLightIntensity, 0.0f, 50.0f, "%.2f")) ResetAccumulation();
+    if (ImGui::SliderFloat("Ray Bias / TMin", &m_rayTMin, 0.001f, 0.25f, "%.3f")) resetLightingSettings();
+    if (ImGui::Checkbox("Sky Enabled", &m_skyEnabled)) resetLightingSettings();
+    if (ImGui::ColorEdit3("Sky Color", m_skyColor)) resetLightingSettings();
+    if (ImGui::ColorEdit3("Sky Horizon Color", m_skyHorizonColor)) resetLightingSettings();
+    if (ImGui::ColorEdit3("Sky Zenith Color", m_skyZenithColor)) resetLightingSettings();
+    if (ImGui::ColorEdit3("Sky Ground Color", m_skyGroundColor)) resetLightingSettings();
+    if (ImGui::SliderFloat("Sky Intensity", &m_skyIntensity, 0.0f, 10.0f, "%.2f")) resetLightingSettings();
+    if (ImGui::SliderFloat("Sun Intensity", &m_sunIntensity, 0.0f, 50.0f, "%.2f")) resetLightingSettings();
+    if (ImGui::SliderFloat("Sun Size", &m_sunAngularRadius, 0.001f, 0.08f, "%.3f")) resetLightingSettings();
+    if (ImGui::Checkbox("Environment Map", &m_environmentMapEnabled)) resetLightingSettings();
+    if (ImGui::SliderFloat("Environment Intensity", &m_environmentIntensity, 0.0f, 10.0f, "%.2f")) resetLightingSettings();
+    if (ImGui::SliderFloat("Environment Rotation", &m_environmentRotation, -3.14159f, 3.14159f, "%.2f")) resetLightingSettings();
+    if (ImGui::Checkbox("Sun NEE", &m_shadowEnabled)) resetLightingSettings();
+    if (ImGui::Checkbox("Sky NEE", &m_skyNeeEnabled)) resetLightingSettings();
+    if (ImGui::Checkbox("Emissive Triangle Lights", &m_emissiveLightsEnabled)) resetLightingSettings();
+    if (ImGui::SliderFloat("Emissive Intensity", &m_emissiveLightIntensity, 0.0f, 30.0f, "%.2f")) resetLightingSettings();
+    if (ImGui::Checkbox("Procedural Area Lights", &m_proceduralLightsEnabled)) resetLightingSettings();
+    if (ImGui::SliderFloat("Area Light Intensity", &m_proceduralLightIntensity, 0.0f, 50.0f, "%.2f")) resetLightingSettings();
     ImGui::PopItemWidth();
     ImGui::End();
 
@@ -3058,19 +3323,19 @@ void D3D12PathTracingBackend::BuildUI()
     ImGui::SetNextWindowSize(ImVec2(430.0f, 380.0f), ImGuiCond_FirstUseEver);
     ImGui::Begin("Path Tracing");
     ImGui::PushItemWidth(240.0f);
-    if (ImGui::SliderInt("Samples / Frame", &m_giSamplesPerFrame, 1, 8)) ResetAccumulation();
-    if (ImGui::SliderInt("Max Bounces", &m_maxPathBounces, 1, 8)) ResetAccumulation();
-    if (ImGui::SliderInt("Min Bounces", &m_minPathBounces, 0, 4)) ResetAccumulation();
+    if (ImGui::SliderInt("Samples / Frame", &m_giSamplesPerFrame, 1, 8)) { ResetRenderingHistory(); m_projectDirty = true; }
+    if (ImGui::SliderInt("Max Bounces", &m_maxPathBounces, 1, 8)) { ResetRenderingHistory(); m_projectDirty = true; }
+    if (ImGui::SliderInt("Min Bounces", &m_minPathBounces, 0, 4)) { ResetRenderingHistory(); m_projectDirty = true; }
     if (m_minPathBounces > m_maxPathBounces) m_minPathBounces = m_maxPathBounces;
-    if (ImGui::SliderFloat("Radiance Clamp", &m_giRadianceClamp, 1.0f, 100.0f, "%.1f")) ResetAccumulation();
-    if (ImGui::SliderFloat("Temporal Clamp", &m_giTemporalClampScale, 0.25f, 4.0f, "%.2f")) ResetAccumulation();
-    if (ImGui::SliderInt("Max Accum Samples", &m_maxAccumulatedFrames, 1, 4096)) ResetAccumulation();
+    if (ImGui::SliderFloat("Radiance Clamp", &m_giRadianceClamp, 1.0f, 100.0f, "%.1f")) { ResetRenderingHistory(); m_projectDirty = true; }
+    if (ImGui::SliderFloat("Temporal Clamp", &m_giTemporalClampScale, 0.25f, 4.0f, "%.2f")) { ResetRenderingHistory(); m_projectDirty = true; }
+    if (ImGui::SliderInt("Max Accum Samples", &m_maxAccumulatedFrames, 1, 4096)) { ResetRenderingHistory(); m_projectDirty = true; }
     ImGui::Checkbox("Freeze Accumulation", &m_freezeAccumulation);
     ImGui::Separator();
-    if (ImGui::Checkbox("Adaptive Samples", &m_adaptiveSamplingEnabled)) ResetAccumulation();
-    if (ImGui::SliderInt("Max Adaptive SPP", &m_maxAdaptiveSamplesPerPixel, 1, 4)) ResetAccumulation();
-    if (ImGui::SliderFloat("Variance Threshold", &m_adaptiveVarianceThreshold, 0.02f, 1.0f, "%.2f")) ResetAccumulation();
-    if (ImGui::SliderFloat("Disocclusion Boost", &m_adaptiveDisocclusionBoost, 0.0f, 4.0f, "%.2f")) ResetAccumulation();
+    if (ImGui::Checkbox("Adaptive Samples", &m_adaptiveSamplingEnabled)) { ResetRenderingHistory(); m_projectDirty = true; }
+    if (ImGui::SliderInt("Max Adaptive SPP", &m_maxAdaptiveSamplesPerPixel, 1, 4)) { ResetRenderingHistory(); m_projectDirty = true; }
+    if (ImGui::SliderFloat("Variance Threshold", &m_adaptiveVarianceThreshold, 0.02f, 1.0f, "%.2f")) { ResetRenderingHistory(); m_projectDirty = true; }
+    if (ImGui::SliderFloat("Disocclusion Boost", &m_adaptiveDisocclusionBoost, 0.0f, 4.0f, "%.2f")) { ResetRenderingHistory(); m_projectDirty = true; }
     ImGui::PopItemWidth();
     ImGui::End();
 
@@ -3078,27 +3343,49 @@ void D3D12PathTracingBackend::BuildUI()
     ImGui::SetNextWindowSize(ImVec2(430.0f, 460.0f), ImGuiCond_FirstUseEver);
     ImGui::Begin("Denoise");
     ImGui::PushItemWidth(240.0f);
-    ImGui::Checkbox("Denoiser Enabled", &m_denoiserEnabled);
-    if (ImGui::Checkbox("Split Signal Denoise", &m_splitSignalDenoise)) ResetAccumulation();
-    if (ImGui::Checkbox("Realtime Reconstruction", &m_realtimeReconstruction)) ResetAccumulation();
-    if (ImGui::Checkbox("Camera Jitter", &m_cameraJitter)) ResetAccumulation();
-    if (ImGui::SliderInt("Max History Frames", &m_reconstructionMaxHistoryFrames, 1, 128)) ResetAccumulation();
-    if (ImGui::SliderFloat("Temporal Alpha Min", &m_temporalAlphaMin, 0.01f, 0.5f, "%.2f")) ResetAccumulation();
-    if (ImGui::SliderFloat("Temporal Alpha Max", &m_temporalAlphaMax, 0.02f, 0.8f, "%.2f")) ResetAccumulation();
+    auto resetDenoiseSettings = [&]()
+    {
+        ResetRenderingHistory();
+        m_projectDirty = true;
+    };
+    const char* noisePresetItems[] = { "Interactive Stable", "Sharp Preview", "Still Capture" };
+    int noisePresetIndex = m_noisePreset == NoisePreset::SharpPreview ? 1 : m_noisePreset == NoisePreset::StillCapture ? 2 : 0;
+    if (ImGui::Combo("Noise Preset", &noisePresetIndex, noisePresetItems, _countof(noisePresetItems)))
+    {
+        ApplyNoisePreset(noisePresetIndex == 1 ? NoisePreset::SharpPreview : noisePresetIndex == 2 ? NoisePreset::StillCapture : NoisePreset::InteractiveStable);
+        resetDenoiseSettings();
+    }
+    const char* jitterModeItems[] = { "Stable16", "Halton", "Off" };
+    int jitterModeIndex = m_jitterMode == JitterMode::Halton ? 1 : m_jitterMode == JitterMode::Off ? 2 : 0;
+    if (ImGui::Combo("Jitter Mode", &jitterModeIndex, jitterModeItems, _countof(jitterModeItems)))
+    {
+        m_jitterMode = jitterModeIndex == 1 ? JitterMode::Halton : jitterModeIndex == 2 ? JitterMode::Off : JitterMode::Stable16;
+        resetDenoiseSettings();
+    }
+    if (ImGui::Button("Reset Denoise History")) ResetDenoiseHistory();
+    if (ImGui::Checkbox("Denoiser Enabled", &m_denoiserEnabled)) resetDenoiseSettings();
+    if (ImGui::Checkbox("Split Signal Denoise", &m_splitSignalDenoise)) resetDenoiseSettings();
+    if (ImGui::Checkbox("Realtime Reconstruction", &m_realtimeReconstruction)) resetDenoiseSettings();
+    if (ImGui::Checkbox("Temporal Stability", &m_temporalStabilityEnabled)) resetDenoiseSettings();
+    if (ImGui::Checkbox("Camera Jitter", &m_cameraJitter)) resetDenoiseSettings();
+    if (ImGui::SliderFloat("Moving Jitter Scale", &m_movingJitterScale, 0.0f, 1.0f, "%.2f")) resetDenoiseSettings();
+    if (ImGui::SliderInt("Max History Frames", &m_reconstructionMaxHistoryFrames, 1, 128)) resetDenoiseSettings();
+    if (ImGui::SliderFloat("Temporal Alpha Min", &m_temporalAlphaMin, 0.01f, 0.5f, "%.2f")) resetDenoiseSettings();
+    if (ImGui::SliderFloat("Temporal Alpha Max", &m_temporalAlphaMax, 0.02f, 0.8f, "%.2f")) resetDenoiseSettings();
     if (m_temporalAlphaMin > m_temporalAlphaMax) m_temporalAlphaMin = m_temporalAlphaMax;
-    if (ImGui::SliderFloat("History Clamp Sigma", &m_historyClampSigma, 0.5f, 4.0f, "%.2f")) ResetAccumulation();
-    if (ImGui::SliderFloat("Reactive Threshold", &m_reactiveThreshold, 0.05f, 1.0f, "%.2f")) ResetAccumulation();
-    if (ImGui::SliderFloat("Specular History Scale", &m_specularHistoryScale, 0.0f, 1.0f, "%.2f")) ResetAccumulation();
-    ImGui::SliderInt("Spatial Iterations", &m_denoiserSpatialIterations, 0, 4);
-    ImGui::SliderInt("A-Trous Passes", &m_atrousPassCount, 0, 5);
-    ImGui::SliderFloat("Diffuse Filter Strength", &m_atrousDiffuseStrength, 0.0f, 1.0f, "%.2f");
-    ImGui::SliderFloat("Specular Filter Strength", &m_atrousSpecularStrength, 0.0f, 1.0f, "%.2f");
-    ImGui::SliderFloat("Variance Scale", &m_atrousVarianceScale, 0.25f, 4.0f, "%.2f");
-    ImGui::SliderFloat("Normal Sigma", &m_denoiserNormalSigma, 0.05f, 1.0f, "%.2f");
-    ImGui::SliderFloat("Depth Sigma", &m_denoiserDepthSigma, 0.002f, 0.10f, "%.3f");
-    ImGui::SliderFloat("Luminance Sigma", &m_denoiserLuminanceSigma, 0.1f, 8.0f, "%.2f");
-    ImGui::SliderFloat("Albedo Sigma", &m_denoiserAlbedoSigma, 0.05f, 1.0f, "%.2f");
-    ImGui::SliderFloat("Denoiser Strength", &m_denoiserStrength, 0.0f, 1.0f, "%.2f");
+    if (ImGui::SliderFloat("History Clamp Sigma", &m_historyClampSigma, 0.5f, 4.0f, "%.2f")) resetDenoiseSettings();
+    if (ImGui::SliderFloat("Reactive Threshold", &m_reactiveThreshold, 0.05f, 1.0f, "%.2f")) resetDenoiseSettings();
+    if (ImGui::SliderFloat("Specular History Scale", &m_specularHistoryScale, 0.0f, 1.0f, "%.2f")) resetDenoiseSettings();
+    if (ImGui::SliderInt("Spatial Iterations", &m_denoiserSpatialIterations, 0, 4)) resetDenoiseSettings();
+    if (ImGui::SliderInt("A-Trous Passes", &m_atrousPassCount, 0, 5)) resetDenoiseSettings();
+    if (ImGui::SliderFloat("Diffuse Filter Strength", &m_atrousDiffuseStrength, 0.0f, 1.0f, "%.2f")) resetDenoiseSettings();
+    if (ImGui::SliderFloat("Specular Filter Strength", &m_atrousSpecularStrength, 0.0f, 1.0f, "%.2f")) resetDenoiseSettings();
+    if (ImGui::SliderFloat("Variance Scale", &m_atrousVarianceScale, 0.25f, 4.0f, "%.2f")) resetDenoiseSettings();
+    if (ImGui::SliderFloat("Normal Sigma", &m_denoiserNormalSigma, 0.05f, 1.0f, "%.2f")) resetDenoiseSettings();
+    if (ImGui::SliderFloat("Depth Sigma", &m_denoiserDepthSigma, 0.002f, 0.10f, "%.3f")) resetDenoiseSettings();
+    if (ImGui::SliderFloat("Luminance Sigma", &m_denoiserLuminanceSigma, 0.1f, 8.0f, "%.2f")) resetDenoiseSettings();
+    if (ImGui::SliderFloat("Albedo Sigma", &m_denoiserAlbedoSigma, 0.05f, 1.0f, "%.2f")) resetDenoiseSettings();
+    if (ImGui::SliderFloat("Denoiser Strength", &m_denoiserStrength, 0.0f, 1.0f, "%.2f")) resetDenoiseSettings();
     ImGui::PopItemWidth();
     ImGui::End();
 
@@ -3113,26 +3400,26 @@ void D3D12PathTracingBackend::BuildUI()
         const char* spatialLabel = m_mode == PathTracingMode::ReSTIRCombined ? "GI Spatial Reuse Passes" : "Spatial Reuse Passes";
         const char* candidateLabel = m_mode == PathTracingMode::ReSTIRCombined ? "GI Candidate Samples / Pixel" : "Candidate Samples / Pixel";
         const char* clampLabel = m_mode == PathTracingMode::ReSTIRCombined ? "GI Reservoir M Clamp" : "Reservoir M Clamp";
-        if (ImGui::Checkbox(temporalLabel, &m_restirTemporalReuse)) ResetAccumulation();
-        if (ImGui::SliderInt(spatialLabel, &m_restirSpatialReusePasses, 0, 4)) ResetAccumulation();
-        if (ImGui::SliderInt("Spatial Radius", &m_restirSpatialRadius, 1, 64)) ResetAccumulation();
-        if (ImGui::SliderInt(candidateLabel, &m_restirCandidateSamples, 1, 4)) ResetAccumulation();
-        if (ImGui::SliderFloat(clampLabel, &m_restirMClamp, 1.0f, 64.0f, "%.1f")) ResetAccumulation();
+        if (ImGui::Checkbox(temporalLabel, &m_restirTemporalReuse)) { ResetRenderingHistory(); m_projectDirty = true; }
+        if (ImGui::SliderInt(spatialLabel, &m_restirSpatialReusePasses, 0, 4)) { ResetRenderingHistory(); m_projectDirty = true; }
+        if (ImGui::SliderInt("Spatial Radius", &m_restirSpatialRadius, 1, 64)) { ResetRenderingHistory(); m_projectDirty = true; }
+        if (ImGui::SliderInt(candidateLabel, &m_restirCandidateSamples, 1, 4)) { ResetRenderingHistory(); m_projectDirty = true; }
+        if (ImGui::SliderFloat(clampLabel, &m_restirMClamp, 1.0f, 64.0f, "%.1f")) { ResetRenderingHistory(); m_projectDirty = true; }
         if (m_mode == PathTracingMode::ReSTIRCombined)
         {
-            if (ImGui::Checkbox("DI Temporal Reuse", &m_restirDiTemporalReuse)) ResetAccumulation();
-            if (ImGui::SliderInt("DI Spatial Reuse Passes", &m_restirDiSpatialReusePasses, 0, 4)) ResetAccumulation();
-            if (ImGui::SliderInt("DI Candidate Samples / Pixel", &m_restirDiCandidateSamples, 1, 4)) ResetAccumulation();
-            if (ImGui::SliderFloat("DI Reservoir M Clamp", &m_restirDiMClamp, 1.0f, 64.0f, "%.1f")) ResetAccumulation();
+            if (ImGui::Checkbox("DI Temporal Reuse", &m_restirDiTemporalReuse)) { ResetRenderingHistory(); m_projectDirty = true; }
+            if (ImGui::SliderInt("DI Spatial Reuse Passes", &m_restirDiSpatialReusePasses, 0, 4)) { ResetRenderingHistory(); m_projectDirty = true; }
+            if (ImGui::SliderInt("DI Candidate Samples / Pixel", &m_restirDiCandidateSamples, 1, 4)) { ResetRenderingHistory(); m_projectDirty = true; }
+            if (ImGui::SliderFloat("DI Reservoir M Clamp", &m_restirDiMClamp, 1.0f, 64.0f, "%.1f")) { ResetRenderingHistory(); m_projectDirty = true; }
         }
-        if (ImGui::Checkbox("Reservoir Reprojection", &m_reservoirReprojection)) ResetAccumulation();
-        if (ImGui::Checkbox("Reservoir Validation", &m_reservoirValidation)) ResetAccumulation();
+        if (ImGui::Checkbox("Reservoir Reprojection", &m_reservoirReprojection)) { ResetRenderingHistory(); m_projectDirty = true; }
+        if (ImGui::Checkbox("Reservoir Validation", &m_reservoirValidation)) { ResetRenderingHistory(); m_projectDirty = true; }
         if (UsesRestirGI(m_mode))
         {
-            if (ImGui::Checkbox("GI Validation Ray", &m_restirGiValidationRay)) ResetAccumulation();
+            if (ImGui::Checkbox("GI Validation Ray", &m_restirGiValidationRay)) { ResetRenderingHistory(); m_projectDirty = true; }
         }
-        if (ImGui::SliderInt("Reservoir Max Age", &m_reservoirMaxAge, 1, 32)) ResetAccumulation();
-        if (ImGui::Button("Reset Reservoirs")) ResetAccumulation();
+        if (ImGui::SliderInt("Reservoir Max Age", &m_reservoirMaxAge, 1, 32)) { ResetRenderingHistory(); m_projectDirty = true; }
+        if (ImGui::Button("Reset Reservoirs")) ResetRenderingHistory();
     }
     else
     {
@@ -3187,13 +3474,17 @@ void D3D12PathTracingBackend::BuildRendererStatsUI()
     ImGui::Text("Accumulated Samples: %u", m_accumulatedFrames);
     ImGui::Text("Mode: %s", PathtracingModeName(m_mode));
     ImGui::Text("Denoiser: %s (%d pass%s)", m_denoiserEnabled ? "On" : "Off", m_denoiserSpatialIterations, m_denoiserSpatialIterations == 1 ? "" : "es");
+    ImGui::Text("Noise Preset: %s", NoisePresetDisplayName(m_noisePreset));
     ImGui::Text("Reconstruction: %s (%d history)", m_realtimeReconstruction ? "Realtime" : "Progressive", m_reconstructionMaxHistoryFrames);
+    ImGui::Text("Temporal Stability: %s / %s", m_temporalStabilityEnabled ? "On" : "Off", m_denoiseHistoryValid && !m_resetDenoiseHistoryRequested ? "History Valid" : "History Reset");
+    ImGui::Text("Jitter: %s strength %.2f", JitterModeDisplayName(m_jitterMode), m_currentJitterStrength);
+    ImGui::Text("Camera Motion: %.3f", m_cameraMotionAmount);
     ImGui::Text("Signal Split: %s", m_splitSignalDenoise ? "On" : "Off");
     ImGui::Text("A-Trous Passes: %d", m_atrousPassCount);
     ImGui::Text("Adaptive SPP: %s / max %d", m_adaptiveSamplingEnabled ? "On" : "Off", m_maxAdaptiveSamplesPerPixel);
     ImGui::Text("History Clamp Sigma: %.2f", m_historyClampSigma);
     ImGui::Text("Reactive Threshold: %.2f", m_reactiveThreshold);
-    ImGui::TextUnformatted("History Valid: see History Match view");
+    ImGui::TextUnformatted("History Valid: see History Match / Confidence views");
     ImGui::TextUnformatted("Disocclusion: see Disocclusion Mask view");
     ImGui::End();
 }
@@ -3363,7 +3654,7 @@ void D3D12PathTracingBackend::OnKeyDown(UINT8 key)
     if (key == VK_SPACE)
     {
         ResetCameraView();
-        ResetAccumulation();
+        ResetRenderingHistory();
     }
 }
 
@@ -3570,6 +3861,121 @@ void D3D12PathTracingBackend::ResetAccumulation()
 {
     m_accumulatedFrames = 0;
     m_resetAccumulationRequested = true;
+}
+
+void D3D12PathTracingBackend::ResetDenoiseHistory()
+{
+    m_denoiseHistoryValid = false;
+    m_resetDenoiseHistoryRequested = true;
+    m_hasPreviousViewProjection = false;
+    m_previousJitter = XMFLOAT2(0.0f, 0.0f);
+    m_cameraMotionTrackingInitialized = false;
+}
+
+void D3D12PathTracingBackend::ResetRenderingHistory()
+{
+    ResetAccumulation();
+    ResetDenoiseHistory();
+}
+
+void D3D12PathTracingBackend::ApplyNoisePreset(NoisePreset preset)
+{
+    m_noisePreset = preset;
+    m_denoiserEnabled = true;
+    m_splitSignalDenoise = true;
+    m_realtimeReconstruction = true;
+    m_cameraJitter = preset != NoisePreset::StillCapture;
+    m_temporalStabilityEnabled = true;
+    m_jitterMode = JitterMode::Stable16;
+
+    switch (preset)
+    {
+    case NoisePreset::SharpPreview:
+        m_movingJitterScale = 0.35f;
+        m_reconstructionMaxHistoryFrames = 18;
+        m_temporalAlphaMin = 0.08f;
+        m_temporalAlphaMax = 0.32f;
+        m_historyClampSigma = 1.10f;
+        m_reactiveThreshold = 0.28f;
+        m_specularHistoryScale = 0.35f;
+        m_atrousPassCount = 2;
+        m_atrousDiffuseStrength = 0.70f;
+        m_atrousSpecularStrength = 0.22f;
+        m_atrousVarianceScale = 1.00f;
+        m_denoiserStrength = 0.65f;
+        break;
+    case NoisePreset::StillCapture:
+        m_cameraJitter = true;
+        m_movingJitterScale = 0.50f;
+        m_reconstructionMaxHistoryFrames = 96;
+        m_temporalAlphaMin = 0.02f;
+        m_temporalAlphaMax = 0.12f;
+        m_historyClampSigma = 2.00f;
+        m_reactiveThreshold = 0.45f;
+        m_specularHistoryScale = 0.60f;
+        m_atrousPassCount = 5;
+        m_atrousDiffuseStrength = 0.95f;
+        m_atrousSpecularStrength = 0.45f;
+        m_atrousVarianceScale = 1.60f;
+        m_denoiserStrength = 0.95f;
+        break;
+    default:
+        m_movingJitterScale = 0.25f;
+        m_reconstructionMaxHistoryFrames = 32;
+        m_temporalAlphaMin = 0.04f;
+        m_temporalAlphaMax = 0.22f;
+        m_historyClampSigma = 1.50f;
+        m_reactiveThreshold = 0.35f;
+        m_specularHistoryScale = 0.45f;
+        m_atrousPassCount = 3;
+        m_atrousDiffuseStrength = 0.85f;
+        m_atrousSpecularStrength = 0.35f;
+        m_atrousVarianceScale = 1.25f;
+        m_denoiserStrength = 0.85f;
+        break;
+    }
+}
+
+void D3D12PathTracingBackend::UpdateCameraMotionState()
+{
+    const XMFLOAT3 cameraPosition = m_camera.GetPosition();
+    const float yaw = m_camera.GetYawRadians();
+    const float pitch = m_camera.GetPitchRadians();
+
+    if (!m_cameraMotionTrackingInitialized)
+    {
+        m_previousCameraMotionState = XMFLOAT4(cameraPosition.x, cameraPosition.y, cameraPosition.z, yaw);
+        m_previousCameraMotionPitch = pitch;
+        m_cameraMotionAmount = 0.0f;
+        m_framesSinceCameraMotion = 4;
+        m_cameraMotionTrackingInitialized = true;
+        return;
+    }
+
+    const float dx = cameraPosition.x - m_previousCameraMotionState.x;
+    const float dy = cameraPosition.y - m_previousCameraMotionState.y;
+    const float dz = cameraPosition.z - m_previousCameraMotionState.z;
+    const float positionDelta = std::sqrt(dx * dx + dy * dy + dz * dz);
+    const float angleDelta = std::abs(yaw - m_previousCameraMotionState.w) + std::abs(pitch - m_previousCameraMotionPitch);
+    m_cameraMotionAmount = std::clamp(positionDelta * 0.20f + angleDelta * 2.0f, 0.0f, 1.0f);
+
+    if (positionDelta > 5.0f || angleDelta > XMConvertToRadians(30.0f))
+    {
+        ResetDenoiseHistory();
+    }
+
+    if (m_cameraMotionAmount > 0.001f)
+    {
+        m_framesSinceCameraMotion = 0;
+    }
+    else
+    {
+        m_framesSinceCameraMotion = (std::min)(m_framesSinceCameraMotion + 1u, 4u);
+    }
+
+    m_previousCameraMotionState = XMFLOAT4(cameraPosition.x, cameraPosition.y, cameraPosition.z, yaw);
+    m_previousCameraMotionPitch = pitch;
+    m_cameraMotionTrackingInitialized = true;
 }
 
 bool D3D12PathTracingBackend::HasAccumulationStateChanged()

@@ -54,6 +54,7 @@ struct SceneConstants
     float4 restirStabilityOptions;
     float4 signalDenoiseOptions;
     float4 denoisePassOptions;
+    float4 stabilityOptions;
 };
 
 struct MeshVertex
@@ -223,6 +224,13 @@ float BlueNoise01(uint2 pixel, uint frame, uint dimension)
     uint value = Hash(pixel.x * 0x8da6b343u ^ pixel.y * 0xd8163841u ^ frame * 0xcb1ab31fu ^ dimension * 0x165667b1u);
     value ^= Hash((pixel.x + pixel.y * 17u + dimension * 131u) * 0x9e3779b9u);
     return (float)(value & 0x00ffffffu) / 16777216.0f;
+}
+
+float StableSample01(uint2 pixel, uint frame, uint sampleIndex, uint dimension)
+{
+    uint mixedFrame = frame ^ Hash(sampleIndex * 0x9e3779b9u + dimension * 0x85ebca6bu);
+    uint mixedDimension = dimension ^ Hash(sampleIndex + frame * 17u);
+    return BlueNoise01(pixel, mixedFrame, mixedDimension);
 }
 
 float3 Tonemap(float3 value)
@@ -724,7 +732,7 @@ float3 TracePathSample(uint2 pixel, uint sampleIndex, out RayPayload firstHit, o
 {
     uint frameCounter = (uint)round(g_scene.frameOptions.w);
     uint rngState = Hash(pixel.x * 1973u ^ pixel.y * 9277u ^ sampleIndex * 26699u ^ 0x9e3779b9u);
-    rngState ^= Hash((uint)(BlueNoise01(pixel, frameCounter, sampleIndex & 7u) * 16777216.0f) + sampleIndex * 747796405u);
+    rngState ^= Hash((uint)(StableSample01(pixel, frameCounter, sampleIndex, sampleIndex & 7u) * 16777216.0f) + sampleIndex * 747796405u);
     float3 rayOrigin = g_scene.cameraPosition.xyz;
     float3 rayDirection = GenerateCameraDirection(pixel);
     float3 throughput = 1.0f.xxx;

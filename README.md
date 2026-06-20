@@ -1,5 +1,7 @@
 # D3D12LookDevPT
 
+Documentation: English / [日本語](README.ja.md)
+
 D3D12LookDevPT is a Direct3D 12 / DXR look-development path tracing sandbox. It uses rasterization only for the swapchain copy and ImGui UI; the scene image is rendered by a progressive DXR path tracer with Baseline PT, ReSTIR GI, ReSTIR DI, and combined ReSTIR GI + DI modes.
 
 ## Scope
@@ -63,11 +65,11 @@ Scenes can be loaded at startup for debugging:
 
 Load diagnostics are appended to `%TEMP%\D3D12LookDevPT.log`.
 
-Validated locally:
+Validated locally in this checkout:
 
-- VS 2026 Insiders `v145`: Debug x64, Release x64.
 - VS 2022 `v143`: Debug x64, Release x64.
-- Release executable smoke-tested for 5 seconds.
+- MCP HTTP smoke tests: initialize, tools/list, get_stats, resources/read, set_view, capture_viewport.
+- The project is configured to select VS 2026 `v145` when available, but this environment only has VS 2022 installed.
 
 ## Notes
 

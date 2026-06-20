@@ -24,6 +24,12 @@ cd D3D12LookDevPT
 git submodule update --init --recursive --depth 1
 ```
 
+local setup の不足確認には setup checker を使えます。
+
+```powershell
+.\Scripts\CheckSetup.ps1
+```
+
 `ThirdParty` の実体は repository 本体には含めません。必要な依存は以下です。
 
 - `ThirdParty/imgui`: ImGui docking branch
@@ -32,7 +38,7 @@ git submodule update --init --recursive --depth 1
 
 ## 大きなアセット
 
-Bistro などの大きなテストアセットは repository で管理しません。容量が大きく、通常の GitHub repository には向かないため、利用者側で別途ダウンロードして配置してください。
+Bistro などの大きなテストアセットは repository で管理しません。容量が大きく、通常の GitHub repository には向かないため、利用者側で別途ダウンロードして配置してください。詳しくは [アセットの配置](docs/assets.ja.md) を参照してください。
 
 例:
 

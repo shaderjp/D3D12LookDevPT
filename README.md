@@ -34,6 +34,12 @@ Clone submodules before building:
 git submodule update --init --recursive --depth 1
 ```
 
+Check the local setup:
+
+```powershell
+.\Scripts\CheckSetup.ps1
+```
+
 Visual Studio 2026 Insiders:
 
 ```powershell
@@ -48,7 +54,7 @@ Visual Studio 2022:
 
 The project auto-selects `v145` on VS 2026 and `v143` otherwise. Third-party static libraries are built by `BuildThirdParty.ps1`.
 
-Large sample assets are not stored in this repository. Download Bistro v5.2 or other test scenes separately and place them next to the solution, for example:
+Large sample assets are not stored in this repository. See [Asset Setup](docs/assets.md) for download and placement notes. Download Bistro v5.2 or other test scenes separately and place them next to the solution, for example:
 
 ```text
 D3D12LookDevPT/

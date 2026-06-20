@@ -4,6 +4,12 @@ Documentation: English / [日本語](README.ja.md)
 
 D3D12LookDevPT is a Direct3D 12 / DXR look-development path tracing sandbox. It uses rasterization only for the swapchain copy and ImGui UI; the scene image is rendered by a progressive DXR path tracer with Baseline PT, ReSTIR GI, ReSTIR DI, and combined ReSTIR GI + DI modes.
 
+## Preview
+
+![D3D12LookDevPT rendering Bistro Exterior with ReSTIR GI + DI and the MCP Server panel](images/screenshot001.png)
+
+The screenshot above uses the Bistro Exterior scene as a local test asset. Large scene assets are not stored in this repository; see [Asset Setup](docs/assets.md) for download and placement notes.
+
 ## Scope
 
 - Direct3D 12 Agility SDK and DXC from NuGet.

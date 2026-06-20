@@ -4,6 +4,12 @@
 
 D3D12LookDevPT は、Direct3D 12 / DXR ベースの LookDev 用パストレーシング環境です。ラスタライズは swapchain への表示コピーと ImGui UI に限定し、シーン本体は DXR の progressive path tracer で描画します。レンダリングモードは `Baseline PT`、`ReSTIR GI`、`ReSTIR DI`、`ReSTIR GI + DI` を切り替えられます。
 
+## プレビュー
+
+![Bistro Exterior を ReSTIR GI + DI で表示し、MCP Server panel を開いた D3D12LookDevPT](images/screenshot001.png)
+
+上の screenshot は local test asset として配置した Bistro Exterior scene を使っています。大きな scene asset は repository に含めない方針です。配置方法は [アセットの配置](docs/assets.ja.md) を参照してください。
+
 ## 主な機能
 
 - Direct3D 12 Agility SDK と DXC を NuGet から利用。

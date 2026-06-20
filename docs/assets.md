@@ -2,6 +2,8 @@
 
 D3D12LookDevPT does not store large scene assets in this repository. Test scenes, HDRIs, and high-resolution texture sets should be downloaded separately and placed beside the solution.
 
+Documentation screenshots under `images/` may show external test scenes such as Bistro, but the original scene assets remain local-only and are not distributed with this repository.
+
 ## Recommended Bistro Layout
 
 For Bistro testing, download Amazon Lumberyard Bistro from NVIDIA ORCA:

@@ -2,6 +2,8 @@
 
 D3D12LookDevPT では、大きな scene asset を repository に含めません。テスト用 scene、HDRI、高解像度 texture set は利用者側で別途ダウンロードし、solution の横に配置してください。
 
+`images/` 以下の documentation screenshot には Bistro などの外部 test scene が写る場合がありますが、元の scene asset は local-only として扱い、この repository では配布しません。
+
 ## Bistro の推奨配置
 
 Bistro を使う場合は、NVIDIA ORCA の Amazon Lumberyard Bistro を取得してください。

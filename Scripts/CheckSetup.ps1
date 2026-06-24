@@ -6,6 +6,7 @@ param(
     [ValidateSet("x64")]
     [string]$Platform = "x64",
     [switch]$CheckAssets,
+    [switch]$CheckDLSS,
     [switch]$Json
 )
 
@@ -128,6 +129,11 @@ Test-File -RelativePath "ThirdParty/imgui/imgui.cpp" -Check "Submodule imgui" -F
 Test-File -RelativePath "ThirdParty/imgui/backends/imgui_impl_dx12.cpp" -Check "Submodule imgui backend" -Fix $submoduleFix
 Test-File -RelativePath "ThirdParty/assimp/include/assimp/Importer.hpp" -Check "Submodule assimp" -Fix $submoduleFix
 Test-File -RelativePath "ThirdParty/DirectXTex/DirectXTex/DirectXTex.h" -Check "Submodule DirectXTex" -Fix $submoduleFix
+Test-File -RelativePath "ThirdParty/Streamline/include/sl.h" -Check "Optional DLSS Streamline submodule" -Fix $submoduleFix -WarnOnly:(!$CheckDLSS)
+Test-File -RelativePath "ThirdParty/DLSS/include/nvsdk_ngx.h" -Check "Optional DLSS SDK submodule" -Fix $submoduleFix -WarnOnly:(!$CheckDLSS)
+Test-File -RelativePath "ThirdParty/DLSS/lib/Windows_x86_64/rel/nvngx_dlss.dll" -Check "Optional DLSS SR runtime" -Fix "Initialize ThirdParty/DLSS or build with /p:EnableDLSS=false." -WarnOnly:(!$CheckDLSS)
+Test-File -RelativePath "ThirdParty/DLSS/lib/Windows_x86_64/rel/nvngx_dlssd.dll" -Check "Optional DLSS-RR runtime" -Fix "Initialize ThirdParty/DLSS or build with /p:EnableDLSS=false." -WarnOnly:(!$CheckDLSS)
+Test-File -RelativePath "ThirdParty/Streamline/bin/x64/sl.interposer.dll" -Check "Optional Streamline runtime" -Fix "Download/build Streamline runtime and place sl.interposer.dll under ThirdParty/Streamline/bin/x64 or Bin/x64/<Config>/Streamline. Build with /p:EnableDLSS=false to skip DLSS." -WarnOnly:(!$CheckDLSS)
 
 $nugetRoot = $env:NuGetPackageRoot
 if (-not $nugetRoot) {
@@ -161,6 +167,10 @@ if ($CheckAssets) {
     Add-Result -Status "WARN" -Check "Assets" -Message "Asset checks were skipped." -Fix "Run with -CheckAssets to verify Bistro_v5_2 placement."
 }
 
+if (-not $CheckDLSS) {
+    Add-Result -Status "WARN" -Check "DLSS strict check" -Message "DLSS runtime checks were warning-only." -Fix "Run with -CheckDLSS to fail when optional DLSS files are missing."
+}
+
 $failCount = @($results | Where-Object { $_.Status -eq "FAIL" }).Count
 $warnCount = @($results | Where-Object { $_.Status -eq "WARN" }).Count
 
@@ -169,6 +179,7 @@ if ($Json) {
         Root = $Root
         Configuration = $Configuration
         Platform = $Platform
+        CheckDLSS = [bool]$CheckDLSS
         Failures = $failCount
         Warnings = $warnCount
         Results = $results

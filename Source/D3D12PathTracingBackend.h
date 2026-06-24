@@ -1,6 +1,7 @@
 #pragma once
 
 #include "DXSample.h"
+#include "DlssBackend.h"
 #include "FpsCamera.h"
 #include "McpDispatcher.h"
 #include "McpServer.h"
@@ -49,6 +50,13 @@ public:
     {
         Stable16,
         Halton,
+        Off,
+    };
+
+    enum class DenoiseBackend
+    {
+        Internal,
+        DlssRayReconstruction,
         Off,
     };
 
@@ -347,6 +355,9 @@ private:
     int m_restirDiCandidateSamples = 1;
     float m_restirDiMClamp = 20.0f;
     bool m_denoiserEnabled = true;
+    DenoiseBackend m_denoiseBackend = DenoiseBackend::Internal;
+    DlssMode m_dlssMode = DlssMode::Quality;
+    bool m_dlssEnabledWhenAvailable = false;
     int m_denoiserSpatialIterations = 2;
     float m_denoiserNormalSigma = 0.25f;
     float m_denoiserDepthSigma = 0.02f;
@@ -502,6 +513,9 @@ private:
     void ResetDenoiseHistory();
     void ResetRenderingHistory();
     void ApplyNoisePreset(NoisePreset preset);
+    bool ShouldRunInternalDenoiser() const;
+    bool IsDlssSelected() const;
+    std::string BuildDlssStatusJson() const;
     void InitializeMaterialLookDevState(bool clearVariants);
     void RebuildMaterialUsage();
     int ResolveMaterialIndex(const cld::JsonValue& params) const;
@@ -554,11 +568,14 @@ private:
     PendingFileDialog m_pendingFileDialog = PendingFileDialog::None;
     UINT m_pendingResizeWidth = 0;
     UINT m_pendingResizeHeight = 0;
+    UINT m_renderWidth = 0;
+    UINT m_renderHeight = 0;
     bool m_pendingGpuResourceRefresh = false;
     bool m_resizePending = false;
     bool m_minimized = false;
     bool m_projectDirty = false;
     std::wstring m_adapterDescription = L"Unknown";
+    DlssBackend m_dlssBackendRuntime;
     mcp::ServerSettings m_mcpSettings;
     mutable std::mutex m_mcpSettingsMutex;
     mcp::Server m_mcpServer;

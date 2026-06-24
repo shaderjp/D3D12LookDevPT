@@ -57,6 +57,12 @@
     <AssimpZlibName>zlib-lookdevpt.lib</AssimpZlibName>
     <DirectXTexProject>$(ProjectDir)ThirdParty\DirectXTex\DirectXTex\DirectXTex_Desktop_$(LookDevPtVsFamily).vcxproj</DirectXTexProject>
     <DirectXTexLibDir>$(ProjectDir)ThirdParty\DirectXTex\DirectXTex\Bin\Desktop_$(LookDevPtVsFamily)\x64\$(Configuration)</DirectXTexLibDir>
+    <EnableDLSS Condition="'$(EnableDLSS)'==''">true</EnableDLSS>
+    <D3D12LookDevPtWithDlss Condition="'$(EnableDLSS)'=='true' Or '$(EnableDLSS)'=='True' Or '$(EnableDLSS)'=='1'">1</D3D12LookDevPtWithDlss>
+    <D3D12LookDevPtWithDlss Condition="'$(D3D12LookDevPtWithDlss)'==''">0</D3D12LookDevPtWithDlss>
+    <StreamlineRoot>$(ProjectDir)ThirdParty\Streamline</StreamlineRoot>
+    <DlssRoot>$(ProjectDir)ThirdParty\DLSS</DlssRoot>
+    <DlssIncludeDirs Condition="'$(D3D12LookDevPtWithDlss)'=='1'">$(StreamlineRoot)\include;$(DlssRoot)\include;</DlssIncludeDirs>
     <NuGetPackageRoot Condition="'$(NuGetPackageRoot)'==''">$(UserProfile)\.nuget\packages\</NuGetPackageRoot>
     <AgilitySdkBinDir>$(NuGetPackageRoot)microsoft.direct3d.d3d12\1.619.3\build\native\bin\x64\</AgilitySdkBinDir>
     <DxcExe>$(NuGetPackageRoot)microsoft.direct3d.dxc\1.9.2602.17\build\native\bin\x64\dxc.exe</DxcExe>
@@ -66,8 +72,8 @@
     <ClCompile>
       <WarningLevel>Level4</WarningLevel>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>WIN32;_DEBUG;_WINDOWS;UNICODE;_UNICODE;NOMINMAX;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>$(ProjectDir)Source;$(ProjectDir)Shaders;$(ProjectDir)ThirdParty\imgui;$(ProjectDir)ThirdParty\imgui\backends;$(ProjectDir)ThirdParty\DirectXTex\DirectXTex;$(ProjectDir)ThirdParty\DirectXTex\Common;$(ProjectDir)ThirdParty\assimp\include;$(AssimpBuildRoot)\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32;_DEBUG;_WINDOWS;UNICODE;_UNICODE;NOMINMAX;D3D12LOOKDEVPT_WITH_DLSS=$(D3D12LookDevPtWithDlss);%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>$(ProjectDir)Source;$(ProjectDir)Shaders;$(ProjectDir)ThirdParty\imgui;$(ProjectDir)ThirdParty\imgui\backends;$(ProjectDir)ThirdParty\DirectXTex\DirectXTex;$(ProjectDir)ThirdParty\DirectXTex\Common;$(ProjectDir)ThirdParty\assimp\include;$(AssimpBuildRoot)\include;$(DlssIncludeDirs)%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <ConformanceMode>true</ConformanceMode>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
@@ -87,8 +93,8 @@
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>true</SDLCheck>
-      <PreprocessorDefinitions>WIN32;NDEBUG;_WINDOWS;UNICODE;_UNICODE;NOMINMAX;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>$(ProjectDir)Source;$(ProjectDir)Shaders;$(ProjectDir)ThirdParty\imgui;$(ProjectDir)ThirdParty\imgui\backends;$(ProjectDir)ThirdParty\DirectXTex\DirectXTex;$(ProjectDir)ThirdParty\DirectXTex\Common;$(ProjectDir)ThirdParty\assimp\include;$(AssimpBuildRoot)\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32;NDEBUG;_WINDOWS;UNICODE;_UNICODE;NOMINMAX;D3D12LOOKDEVPT_WITH_DLSS=$(D3D12LookDevPtWithDlss);%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>$(ProjectDir)Source;$(ProjectDir)Shaders;$(ProjectDir)ThirdParty\imgui;$(ProjectDir)ThirdParty\imgui\backends;$(ProjectDir)ThirdParty\DirectXTex\DirectXTex;$(ProjectDir)ThirdParty\DirectXTex\Common;$(ProjectDir)ThirdParty\assimp\include;$(AssimpBuildRoot)\include;$(DlssIncludeDirs)%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <ConformanceMode>true</ConformanceMode>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
@@ -106,6 +112,7 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="Source\D3D12PathTracingBackend.cpp" />
+    <ClCompile Include="Source\DlssBackend.cpp" />
     <ClCompile Include="Source\DXSample.cpp" />
     <ClCompile Include="Source\FpsCamera.cpp" />
     <ClCompile Include="Source\Main.cpp" />
@@ -128,6 +135,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Source\D3D12PathTracingBackend.h" />
+    <ClInclude Include="Source\DlssBackend.h" />
     <ClInclude Include="Source\DXSample.h" />
     <ClInclude Include="Source\DXSampleHelper.h" />
     <ClInclude Include="Source\EditorTypes.h" />
@@ -168,6 +176,8 @@
     <Error Condition="!Exists('$(ProjectDir)ThirdParty\imgui\imgui.cpp')" Text="ThirdParty\imgui is missing." />
     <Error Condition="!Exists('$(ProjectDir)ThirdParty\DirectXTex\DirectXTex\DirectXTex.h')" Text="ThirdParty\DirectXTex is missing." />
     <Error Condition="!Exists('$(ProjectDir)ThirdParty\assimp\include\assimp\Importer.hpp')" Text="ThirdParty\assimp is missing." />
+    <Error Condition="'$(D3D12LookDevPtWithDlss)'=='1' And !Exists('$(StreamlineRoot)\include\sl.h')" Text="ThirdParty\Streamline is missing. Run git submodule update --init --recursive or build with /p:EnableDLSS=false." />
+    <Error Condition="'$(D3D12LookDevPtWithDlss)'=='1' And !Exists('$(DlssRoot)\include\nvsdk_ngx.h')" Text="ThirdParty\DLSS is missing. Run git submodule update --init --recursive or build with /p:EnableDLSS=false." />
   </Target>
   <Target Name="BuildThirdParty" BeforeTargets="ClCompile">
     <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(ProjectDir)BuildThirdParty.ps1&quot; -AssimpRoot &quot;$(AssimpRoot)&quot; -AssimpBuildRoot &quot;$(AssimpBuildRoot)&quot; -AssimpLibDir &quot;$(AssimpLibDir)&quot; -AssimpZlibDir &quot;$(AssimpZlibDir)&quot; -AssimpLibName &quot;$(AssimpLibName)&quot; -AssimpZlibName &quot;$(AssimpZlibName)&quot; -DirectXTexProject &quot;$(DirectXTexProject)&quot; -DirectXTexLibDir &quot;$(DirectXTexLibDir)&quot; -MSBuildPath &quot;$(MSBuildToolsPath)\MSBuild.exe&quot; -Configuration &quot;$(Configuration)&quot; -VisualStudioVersion &quot;$(VisualStudioVersion)&quot;" />
@@ -198,5 +208,17 @@
     <MakeDir Directories="$(OutDir)D3D12" />
     <Error Condition="!Exists('$(AgilitySdkBinDir)D3D12Core.dll')" Text="D3D12 Agility SDK DLLs were not found at $(AgilitySdkBinDir). Restore NuGet packages first." />
     <Copy SourceFiles="$(AgilitySdkBinDir)D3D12Core.dll;$(AgilitySdkBinDir)d3d12SDKLayers.dll" DestinationFolder="$(OutDir)D3D12\" SkipUnchangedFiles="true" />
+  </Target>
+  <Target Name="CopyOptionalDlssRuntime" AfterTargets="Build" Condition="'$(D3D12LookDevPtWithDlss)'=='1'">
+    <MakeDir Directories="$(OutDir)Streamline" />
+    <ItemGroup>
+      <DlssRuntimeFiles Include="$(DlssRoot)\lib\Windows_x86_64\rel\nvngx_dlss.dll" Condition="Exists('$(DlssRoot)\lib\Windows_x86_64\rel\nvngx_dlss.dll')" />
+      <DlssRuntimeFiles Include="$(DlssRoot)\lib\Windows_x86_64\rel\nvngx_dlssd.dll" Condition="Exists('$(DlssRoot)\lib\Windows_x86_64\rel\nvngx_dlssd.dll')" />
+      <StreamlineRuntimeFiles Include="$(StreamlineRoot)\bin\x64\sl.interposer.dll" Condition="Exists('$(StreamlineRoot)\bin\x64\sl.interposer.dll')" />
+      <StreamlineRuntimeFiles Include="$(StreamlineRoot)\bin\x64\sl.common.dll" Condition="Exists('$(StreamlineRoot)\bin\x64\sl.common.dll')" />
+      <StreamlineRuntimeFiles Include="$(StreamlineRoot)\bin\x64\sl.dlss.dll" Condition="Exists('$(StreamlineRoot)\bin\x64\sl.dlss.dll')" />
+      <StreamlineRuntimeFiles Include="$(StreamlineRoot)\bin\x64\sl.dlss_d.dll" Condition="Exists('$(StreamlineRoot)\bin\x64\sl.dlss_d.dll')" />
+    </ItemGroup>
+    <Copy SourceFiles="@(DlssRuntimeFiles);@(StreamlineRuntimeFiles)" DestinationFolder="$(OutDir)Streamline\" SkipUnchangedFiles="true" Condition="'@(DlssRuntimeFiles);@(StreamlineRuntimeFiles)' != ''" />
   </Target>
 </Project>

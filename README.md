@@ -6,9 +6,11 @@ D3D12LookDevPT is a Direct3D 12 / DXR look-development path tracing sandbox. It 
 
 ## Preview
 
-![D3D12LookDevPT rendering Bistro Exterior with ReSTIR GI + DI and the MCP Server panel](images/screenshot001.png)
+![D3D12LookDevPT rendering Bistro Exterior with ReSTIR GI + DI and the MCP Server panel](images/screenshot005-mcp-server-runtime.png)
 
-The screenshot above uses the Bistro Exterior scene as a local test asset. Large scene assets are not stored in this repository; see [Asset Setup](docs/assets.md) for download and placement notes.
+![D3D12LookDevPT rendering Bistro Interior with ReSTIR GI + DI controls](images/screenshot006-bistro-interior-restir.png)
+
+The screenshots above use Bistro Exterior and Bistro Interior as local test assets. Large scene assets are not stored in this repository; see [Asset Setup](docs/assets.md) for download and placement notes.
 
 ## Scope
 
@@ -17,6 +19,7 @@ The screenshot above uses the Bistro Exterior scene as a local test asset. Large
 - DirectXTex texture loading for PNG/JPEG/TGA/DDS/HDR paths and compressed embedded textures extracted by Assimp.
 - PBR-oriented material slots: base color, normal, roughness, metallic, occlusion, emissive, alpha mask, texture overrides, material variants, and presets.
 - DXR BLAS/TLAS, shader tables, progressive accumulation, debug views, ReSTIR reservoirs, and lightweight AOV denoising.
+- Optional NVIDIA Streamline / DLSS Ray Reconstruction backend with internal-denoiser fallback for unsupported GPUs or missing runtime DLLs.
 - Project files saved as `.lookdevpt.json`.
 - A local MCP server for automation via the same validation-oriented action layer used by the UI.
 
@@ -47,6 +50,8 @@ Check the local setup:
 ```powershell
 .\Scripts\CheckSetup.ps1
 ```
+
+DLSS Ray Reconstruction is optional and defaults to off at runtime. The project can be built without NVIDIA dependencies by passing `/p:EnableDLSS=false`; see [Optional DLSS Ray Reconstruction](docs/dlss.md) for submodule/runtime placement and MCP examples.
 
 Visual Studio 2026 Insiders:
 

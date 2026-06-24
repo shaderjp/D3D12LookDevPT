@@ -10,3 +10,9 @@
 	path = ThirdParty/DirectXTex
 	url = https://github.com/microsoft/DirectXTex.git
 	branch = main
+[submodule "ThirdParty/Streamline"]
+	path = ThirdParty/Streamline
+	url = https://github.com/NVIDIA-RTX/Streamline.git
+[submodule "ThirdParty/DLSS"]
+	path = ThirdParty/DLSS
+	url = https://github.com/NVIDIA/DLSS.git

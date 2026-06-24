@@ -50,6 +50,17 @@ namespace
         ApplyClientDisplayResolution(hwnd, Widths[presetIndex], Heights[presetIndex]);
     }
 
+    std::wstring ExecutableDirectory()
+    {
+        std::array<wchar_t, 32768> path = {};
+        const DWORD length = GetModuleFileNameW(nullptr, path.data(), static_cast<DWORD>(path.size()));
+        if (length == 0 || length >= path.size())
+        {
+            return std::filesystem::current_path().wstring();
+        }
+        return std::filesystem::path(path.data()).parent_path().wstring();
+    }
+
     void SubmitMainDockSpace()
     {
         const ImGuiViewport* viewport = ImGui::GetMainViewport();
@@ -518,6 +529,107 @@ namespace
         return false;
     }
 
+    const char* DenoiseBackendName(D3D12PathTracingBackend::DenoiseBackend backend)
+    {
+        switch (backend)
+        {
+        case D3D12PathTracingBackend::DenoiseBackend::DlssRayReconstruction:
+            return "dlss_rr";
+        case D3D12PathTracingBackend::DenoiseBackend::Off:
+            return "off";
+        default:
+            return "internal";
+        }
+    }
+
+    const char* DenoiseBackendDisplayName(D3D12PathTracingBackend::DenoiseBackend backend)
+    {
+        switch (backend)
+        {
+        case D3D12PathTracingBackend::DenoiseBackend::DlssRayReconstruction:
+            return "DLSS Ray Reconstruction";
+        case D3D12PathTracingBackend::DenoiseBackend::Off:
+            return "Off";
+        default:
+            return "Internal";
+        }
+    }
+
+    bool TryParseDenoiseBackend(const std::string& name, D3D12PathTracingBackend::DenoiseBackend& backend)
+    {
+        if (name.empty() || name == "internal" || name == "Internal")
+        {
+            backend = D3D12PathTracingBackend::DenoiseBackend::Internal;
+            return true;
+        }
+        if (name == "dlss_rr" || name == "dlss" || name == "DLSS Ray Reconstruction")
+        {
+            backend = D3D12PathTracingBackend::DenoiseBackend::DlssRayReconstruction;
+            return true;
+        }
+        if (name == "off" || name == "none" || name == "Off")
+        {
+            backend = D3D12PathTracingBackend::DenoiseBackend::Off;
+            return true;
+        }
+        return false;
+    }
+
+    const char* DlssModeName(DlssMode mode)
+    {
+        switch (mode)
+        {
+        case DlssMode::Balanced:
+            return "balanced";
+        case DlssMode::Performance:
+            return "performance";
+        case DlssMode::UltraPerformance:
+            return "ultra_performance";
+        default:
+            return "quality";
+        }
+    }
+
+    const char* DlssModeDisplayName(DlssMode mode)
+    {
+        switch (mode)
+        {
+        case DlssMode::Balanced:
+            return "Balanced";
+        case DlssMode::Performance:
+            return "Performance";
+        case DlssMode::UltraPerformance:
+            return "Ultra Performance";
+        default:
+            return "Quality";
+        }
+    }
+
+    bool TryParseDlssMode(const std::string& name, DlssMode& mode)
+    {
+        if (name.empty() || name == "quality" || name == "Quality")
+        {
+            mode = DlssMode::Quality;
+            return true;
+        }
+        if (name == "balanced" || name == "Balanced")
+        {
+            mode = DlssMode::Balanced;
+            return true;
+        }
+        if (name == "performance" || name == "Performance")
+        {
+            mode = DlssMode::Performance;
+            return true;
+        }
+        if (name == "ultra_performance" || name == "Ultra Performance" || name == "ultraPerformance")
+        {
+            mode = DlssMode::UltraPerformance;
+            return true;
+        }
+        return false;
+    }
+
     std::array<float, 4> Float4ToArray(const XMFLOAT4& value)
     {
         return { value.x, value.y, value.z, value.w };
@@ -798,6 +910,8 @@ D3D12PathTracingBackend::D3D12PathTracingBackend(UINT width, UINT height, std::w
     DXSample(width, height, name),
     m_viewport(0.0f, 0.0f, static_cast<float>(width), static_cast<float>(height)),
     m_scissorRect(0, 0, static_cast<LONG>(width), static_cast<LONG>(height)),
+    m_renderWidth(width),
+    m_renderHeight(height),
     m_mode(mode)
 {
 }
@@ -833,6 +947,8 @@ void D3D12PathTracingBackend::OnInit()
 
 void D3D12PathTracingBackend::LoadPipeline()
 {
+    m_dlssBackendRuntime.InitializeBeforeDevice(ExecutableDirectory());
+
     UINT dxgiFactoryFlags = 0;
 #if defined(_DEBUG)
     ComPtr<ID3D12Debug> debugController;
@@ -866,6 +982,7 @@ void D3D12PathTracingBackend::LoadPipeline()
     ComPtr<ID3D12Device2> baseDevice;
     ThrowIfFailed(D3D12CreateDevice(hardwareAdapter.Get(), D3D_FEATURE_LEVEL_12_1, IID_PPV_ARGS(&baseDevice)));
     ThrowIfFailed(baseDevice.As(&m_device));
+    m_dlssBackendRuntime.SetD3DDevice(m_device.Get(), hardwareAdapter.Get(), m_width, m_height, m_dlssMode);
 
     D3D12_FEATURE_DATA_D3D12_OPTIONS5 options5{};
     ThrowIfFailed(m_device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS5, &options5, sizeof(options5)));
@@ -956,12 +1073,15 @@ void D3D12PathTracingBackend::Resize(UINT width, UINT height)
 
     m_width = width;
     m_height = height;
+    m_renderWidth = width;
+    m_renderHeight = height;
     m_aspectRatio = static_cast<float>(m_width) / static_cast<float>(m_height);
     m_viewport = CD3DX12_VIEWPORT(0.0f, 0.0f, static_cast<float>(m_width), static_cast<float>(m_height));
     m_scissorRect = CD3DX12_RECT(0, 0, static_cast<LONG>(m_width), static_cast<LONG>(m_height));
 
     const UINT flags = m_tearingSupported ? DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING : 0;
     ThrowIfFailed(m_swapChain->ResizeBuffers(FrameCount, m_width, m_height, BackBufferFormat, flags));
+    m_dlssBackendRuntime.UpdateMode(m_width, m_height, m_dlssMode);
     m_frameIndex = m_swapChain->GetCurrentBackBufferIndex();
     CreateRenderTargetViews();
     CreateGpuResourcesForCurrentScene();
@@ -1637,6 +1757,9 @@ bool D3D12PathTracingBackend::SaveProjectToDisk(const std::wstring& path)
          << ", \"giValidationRay\": " << (m_restirGiValidationRay ? "true" : "false")
          << ", \"reservoirMaxAge\": " << m_reservoirMaxAge << "},\n";
     file << "  \"denoise\": {\"preset\": \"" << NoisePresetName(m_noisePreset) << "\", \"enabled\": " << (m_denoiserEnabled ? "true" : "false")
+         << ", \"backend\": \"" << DenoiseBackendName(m_denoiseBackend) << "\""
+         << ", \"dlssMode\": \"" << DlssModeName(m_dlssMode) << "\""
+         << ", \"dlssEnabledWhenAvailable\": " << (m_dlssEnabledWhenAvailable ? "true" : "false")
          << ", \"splitSignalDenoise\": " << (m_splitSignalDenoise ? "true" : "false")
          << ", \"realtimeReconstruction\": " << (m_realtimeReconstruction ? "true" : "false")
          << ", \"cameraJitter\": " << (m_cameraJitter ? "true" : "false")
@@ -1884,7 +2007,29 @@ bool D3D12PathTracingBackend::LoadProjectFromDisk(const std::wstring& path, std:
                 }
                 m_jitterMode = jitterMode;
             }
+            if (const cld::JsonValue* backendValue = cld::FindMember(*denoise, "backend"))
+            {
+                DenoiseBackend backend = m_denoiseBackend;
+                if (backendValue->type != cld::JsonValue::Type::String || !TryParseDenoiseBackend(backendValue->string, backend))
+                {
+                    diagnostics = "Project denoise backend is invalid.";
+                    return false;
+                }
+                m_denoiseBackend = backend;
+            }
+            if (const cld::JsonValue* dlssModeValue = cld::FindMember(*denoise, "dlssMode"))
+            {
+                DlssMode dlssMode = m_dlssMode;
+                if (dlssModeValue->type != cld::JsonValue::Type::String || !TryParseDlssMode(dlssModeValue->string, dlssMode))
+                {
+                    diagnostics = "Project denoise dlssMode is invalid.";
+                    return false;
+                }
+                m_dlssMode = dlssMode;
+                m_dlssBackendRuntime.UpdateMode(m_width, m_height, m_dlssMode);
+            }
             m_denoiserEnabled = cld::JsonBoolOr(*denoise, "enabled", m_denoiserEnabled);
+            m_dlssEnabledWhenAvailable = cld::JsonBoolOr(*denoise, "dlssEnabledWhenAvailable", m_dlssEnabledWhenAvailable);
             m_splitSignalDenoise = cld::JsonBoolOr(*denoise, "splitSignalDenoise", m_splitSignalDenoise);
             m_realtimeReconstruction = cld::JsonBoolOr(*denoise, "realtimeReconstruction", m_realtimeReconstruction);
             m_cameraJitter = cld::JsonBoolOr(*denoise, "cameraJitter", m_cameraJitter);
@@ -2490,6 +2635,26 @@ bool D3D12PathTracingBackend::ApplyAction(const std::string& method, const cld::
             }
         }
 
+        DenoiseBackend denoiseBackend = m_denoiseBackend;
+        if (const cld::JsonValue* backendValue = cld::FindMember(params, "backend"))
+        {
+            if (backendValue->type != cld::JsonValue::Type::String || !TryParseDenoiseBackend(backendValue->string, denoiseBackend))
+            {
+                diagnostics = "Denoise backend is invalid.";
+                return false;
+            }
+        }
+
+        DlssMode dlssMode = m_dlssMode;
+        if (const cld::JsonValue* dlssModeValue = cld::FindMember(params, "dlssMode"))
+        {
+            if (dlssModeValue->type != cld::JsonValue::Type::String || !TryParseDlssMode(dlssModeValue->string, dlssMode))
+            {
+                diagnostics = "Denoise dlssMode is invalid.";
+                return false;
+            }
+        }
+
         const float strength = static_cast<float>(cld::JsonNumberOr(params, "strength", m_denoiserStrength));
         const float temporalAlphaMin = static_cast<float>(cld::JsonNumberOr(params, "temporalAlphaMin", m_temporalAlphaMin));
         const float temporalAlphaMax = static_cast<float>(cld::JsonNumberOr(params, "temporalAlphaMax", m_temporalAlphaMax));
@@ -2526,6 +2691,10 @@ bool D3D12PathTracingBackend::ApplyAction(const std::string& method, const cld::
             }
 
             m_denoiserEnabled = cld::JsonBoolOr(params, "enabled", m_denoiserEnabled);
+            m_denoiseBackend = denoiseBackend;
+            m_dlssMode = dlssMode;
+            m_dlssEnabledWhenAvailable = cld::JsonBoolOr(params, "dlssEnabledWhenAvailable", m_dlssEnabledWhenAvailable);
+            m_dlssBackendRuntime.UpdateMode(m_width, m_height, m_dlssMode);
             m_splitSignalDenoise = cld::JsonBoolOr(params, "splitSignalDenoise", m_splitSignalDenoise);
             m_realtimeReconstruction = cld::JsonBoolOr(params, "realtimeReconstruction", m_realtimeReconstruction);
             m_cameraJitter = cld::JsonBoolOr(params, "cameraJitter", m_cameraJitter);
@@ -2555,6 +2724,10 @@ bool D3D12PathTracingBackend::ApplyAction(const std::string& method, const cld::
             else
             {
                 ResetAccumulation();
+            }
+            if (cld::JsonBoolOr(params, "resetDlss", false))
+            {
+                m_dlssBackendRuntime.ResetHistory();
             }
             m_projectDirty = true;
         }
@@ -3465,7 +3638,12 @@ std::string D3D12PathTracingBackend::BuildMcpStateJson() const
         << ",\"giValidationRay\":" << (m_restirGiValidationRay ? "true" : "false")
         << ",\"reservoirMaxAge\":" << m_reservoirMaxAge << "},";
     out << "\"denoise\":{\"preset\":\"" << NoisePresetName(m_noisePreset) << "\",\"presetLabel\":\"" << NoisePresetDisplayName(m_noisePreset)
-        << "\",\"enabled\":" << (m_denoiserEnabled ? "true" : "false")
+        << "\",\"backend\":\"" << DenoiseBackendName(m_denoiseBackend)
+        << "\",\"backendLabel\":\"" << DenoiseBackendDisplayName(m_denoiseBackend)
+        << "\",\"activeBackend\":\"" << (m_denoiseBackend == DenoiseBackend::Off ? "off" : (IsDlssSelected() && m_dlssBackendRuntime.CanEvaluateRayReconstruction() ? "dlss_rr" : "internal"))
+        << "\",\"dlssMode\":\"" << DlssModeName(m_dlssMode)
+        << "\",\"dlssEnabledWhenAvailable\":" << (m_dlssEnabledWhenAvailable ? "true" : "false")
+        << ",\"enabled\":" << (m_denoiserEnabled ? "true" : "false")
         << ",\"splitSignalDenoise\":" << (m_splitSignalDenoise ? "true" : "false")
         << ",\"realtimeReconstruction\":" << (m_realtimeReconstruction ? "true" : "false")
         << ",\"cameraJitter\":" << (m_cameraJitter ? "true" : "false")
@@ -3478,7 +3656,7 @@ std::string D3D12PathTracingBackend::BuildMcpStateJson() const
         << ",\"maxHistoryFrames\":" << m_reconstructionMaxHistoryFrames
         << ",\"historyClampSigma\":" << m_historyClampSigma << ",\"reactiveThreshold\":" << m_reactiveThreshold
         << ",\"spatialIterations\":" << m_denoiserSpatialIterations << ",\"atrousPasses\":" << m_atrousPassCount
-        << ",\"strength\":" << m_denoiserStrength << "},";
+        << ",\"strength\":" << m_denoiserStrength << ",\"dlss\":" << BuildDlssStatusJson() << "},";
     const int debugViewIndex = std::clamp(m_debugViewMode, 0, static_cast<int>(_countof(DebugViewLabels)) - 1);
     out << "\"view\":{\"debugView\":" << m_debugViewMode << ",\"debugViewLabel\":\"" << DebugViewLabels[debugViewIndex]
         << "\",\"normalMapYFlip\":" << (m_debugNormalMapYFlip ? "true" : "false")
@@ -3505,7 +3683,8 @@ std::string D3D12PathTracingBackend::BuildMcpStatsJson() const
     out << "\"api\":\"Direct3D 12 DXR\",";
     out << "\"adapter\":\"" << cld::EscapeJson(WideToUtf8(m_adapterDescription)) << "\",";
     out << "\"dxrTier\":\"" << cld::EscapeJson(WideToUtf8(PathtracingTierName(m_raytracingTier))) << "\",";
-    out << "\"resolution\":{\"width\":" << m_width << ",\"height\":" << m_height << "},";
+    out << "\"resolution\":{\"width\":" << m_width << ",\"height\":" << m_height
+        << ",\"renderWidth\":" << m_renderWidth << ",\"renderHeight\":" << m_renderHeight << "},";
     out << "\"materials\":" << m_scene.materials.size() << ",";
     out << "\"textures\":" << m_textures.size() << ",";
     out << "\"vertices\":" << m_scene.vertices.size() << ",";
@@ -3520,11 +3699,15 @@ std::string D3D12PathTracingBackend::BuildMcpStatsJson() const
     out << "\"samplesAccumulated\":" << m_accumulatedFrames << ",";
     out << "\"activeMode\":\"" << PathtracingModeName(m_mode) << "\",";
     out << "\"reservoirCount\":" << m_restirReservoirElementCount << ",";
-    out << "\"denoiser\":{\"preset\":\"" << NoisePresetName(m_noisePreset) << "\",\"enabled\":" << (m_denoiserEnabled ? "true" : "false")
+    out << "\"denoiser\":{\"preset\":\"" << NoisePresetName(m_noisePreset)
+        << "\",\"backend\":\"" << DenoiseBackendName(m_denoiseBackend)
+        << "\",\"activeBackend\":\"" << (m_denoiseBackend == DenoiseBackend::Off ? "off" : (IsDlssSelected() && m_dlssBackendRuntime.CanEvaluateRayReconstruction() ? "dlss_rr" : "internal"))
+        << "\",\"enabled\":" << (m_denoiserEnabled ? "true" : "false")
         << ",\"temporalStability\":" << (m_temporalStabilityEnabled ? "true" : "false")
         << ",\"historyValid\":" << (m_denoiseHistoryValid && !m_resetDenoiseHistoryRequested ? "true" : "false")
         << ",\"jitterMode\":\"" << JitterModeName(m_jitterMode) << "\",\"jitterStrength\":" << m_currentJitterStrength
-        << ",\"spatialIterations\":" << m_denoiserSpatialIterations << ",\"atrousPasses\":" << m_atrousPassCount << "},";
+        << ",\"spatialIterations\":" << m_denoiserSpatialIterations << ",\"atrousPasses\":" << m_atrousPassCount
+        << ",\"dlss\":" << BuildDlssStatusJson() << "},";
     out << "\"mcp\":{\"running\":" << (m_mcpServer.IsRunning() ? "true" : "false") << ",\"pendingCommands\":" << m_mcpDispatcher.PendingCount() << "}";
     out << "}";
     return out.str();
@@ -4678,7 +4861,7 @@ void D3D12PathTracingBackend::UpdateConstantBuffer(float)
         combinedRestir ? m_restirDiMClamp : m_restirMClamp);
     constants.lightOptions = XMFLOAT4(static_cast<float>(m_activeLightCount), m_emissiveLightsEnabled ? m_emissiveLightIntensity : 0.0f, m_proceduralLightsEnabled ? m_proceduralLightIntensity : 0.0f, static_cast<float>(m_environmentDescriptorIndex));
     constants.environmentOptions = XMFLOAT4(m_environmentMapEnabled ? 1.0f : 0.0f, m_environmentIntensity, m_environmentRotation, 0.0f);
-    constants.denoiseOptions = XMFLOAT4(m_denoiserEnabled ? 1.0f : 0.0f, static_cast<float>(m_denoiserSpatialIterations), m_denoiserNormalSigma, m_denoiserDepthSigma);
+    constants.denoiseOptions = XMFLOAT4(ShouldRunInternalDenoiser() ? 1.0f : 0.0f, static_cast<float>(m_denoiserSpatialIterations), m_denoiserNormalSigma, m_denoiserDepthSigma);
     constants.denoiseOptions2 = XMFLOAT4(m_denoiserLuminanceSigma, m_denoiserAlbedoSigma, m_denoiserStrength, 0.0f);
     constants.jitterOptions = XMFLOAT4(m_currentJitter.x, m_currentJitter.y, m_previousJitter.x, m_previousJitter.y);
     constants.reconstructionOptions = XMFLOAT4(m_realtimeReconstruction ? 1.0f : 0.0f, static_cast<float>(m_reconstructionMaxHistoryFrames), m_temporalAlphaMin, m_temporalAlphaMax);
@@ -4849,7 +5032,7 @@ void D3D12PathTracingBackend::RunRestirReusePass()
 
 void D3D12PathTracingBackend::RunDenoisePass()
 {
-    if (!m_denoiseTemporalPipeline || !m_denoiseCompositePipeline || (!m_denoiserEnabled && m_debugViewMode < 16))
+    if (!m_denoiseTemporalPipeline || !m_denoiseCompositePipeline || !ShouldRunInternalDenoiser())
     {
         return;
     }
@@ -5397,7 +5580,7 @@ void D3D12PathTracingBackend::BuildUI()
     ImGui::End();
 
     ImGui::SetNextWindowPos(ImVec2(760.0f, 370.0f), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(430.0f, 460.0f), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(460.0f, 620.0f), ImGuiCond_FirstUseEver);
     ImGui::Begin("Denoise");
     ImGui::PushItemWidth(240.0f);
     auto resetDenoiseSettings = [&]()
@@ -5405,6 +5588,53 @@ void D3D12PathTracingBackend::BuildUI()
         ResetRenderingHistory();
         m_projectDirty = true;
     };
+    const char* denoiseBackendItems[] = { "Internal", "DLSS Ray Reconstruction", "Off" };
+    int denoiseBackendIndex = m_denoiseBackend == DenoiseBackend::DlssRayReconstruction ? 1 : m_denoiseBackend == DenoiseBackend::Off ? 2 : 0;
+    if (ImGui::Combo("Denoise Backend", &denoiseBackendIndex, denoiseBackendItems, _countof(denoiseBackendItems)))
+    {
+        m_denoiseBackend = denoiseBackendIndex == 1 ? DenoiseBackend::DlssRayReconstruction : denoiseBackendIndex == 2 ? DenoiseBackend::Off : DenoiseBackend::Internal;
+        if (m_denoiseBackend == DenoiseBackend::Internal)
+        {
+            m_denoiserEnabled = true;
+        }
+        resetDenoiseSettings();
+    }
+    const char* dlssModeItems[] = { "Quality", "Balanced", "Performance", "Ultra Performance" };
+    int dlssModeIndex = m_dlssMode == DlssMode::Balanced ? 1 : m_dlssMode == DlssMode::Performance ? 2 : m_dlssMode == DlssMode::UltraPerformance ? 3 : 0;
+    if (ImGui::Combo("DLSS Mode", &dlssModeIndex, dlssModeItems, _countof(dlssModeItems)))
+    {
+        m_dlssMode = dlssModeIndex == 1 ? DlssMode::Balanced : dlssModeIndex == 2 ? DlssMode::Performance : dlssModeIndex == 3 ? DlssMode::UltraPerformance : DlssMode::Quality;
+        m_dlssBackendRuntime.UpdateMode(m_width, m_height, m_dlssMode);
+        resetDenoiseSettings();
+    }
+    if (ImGui::Checkbox("DLSS Enabled When Available", &m_dlssEnabledWhenAvailable))
+    {
+        resetDenoiseSettings();
+    }
+    const DlssStatus& dlssStatus = m_dlssBackendRuntime.Status();
+    ImGui::Text("Active Backend: %s", m_denoiseBackend == DenoiseBackend::Off ? "Off" : (IsDlssSelected() && m_dlssBackendRuntime.CanEvaluateRayReconstruction() ? "DLSS Ray Reconstruction" : "Internal"));
+    ImGui::Text("DLSS Compiled: %s", dlssStatus.compiled ? "Yes" : "No");
+    ImGui::Text("DLSS Runtime: %s", dlssStatus.runtimeAvailable ? "Found" : "Missing");
+    ImGui::Text("DLSS Adapter Support: %s", dlssStatus.featureSupported ? "Supported" : "Unsupported");
+    ImGui::Text("DLSS Render: %ux%u -> %ux%u",
+        dlssStatus.recommendedRenderWidth > 0 ? dlssStatus.recommendedRenderWidth : m_renderWidth,
+        dlssStatus.recommendedRenderHeight > 0 ? dlssStatus.recommendedRenderHeight : m_renderHeight,
+        m_width,
+        m_height);
+    if (!dlssStatus.fallbackReason.empty())
+    {
+        ImGui::TextWrapped("DLSS Status: %s", dlssStatus.fallbackReason.c_str());
+    }
+    if (!dlssStatus.lastError.empty())
+    {
+        ImGui::TextWrapped("DLSS Last Error: %s", dlssStatus.lastError.c_str());
+    }
+    if (ImGui::Button("Reset DLSS History"))
+    {
+        m_dlssBackendRuntime.ResetHistory();
+        ResetAccumulation();
+    }
+    ImGui::Separator();
     const char* noisePresetItems[] = { "Interactive Stable", "Sharp Preview", "Still Capture" };
     int noisePresetIndex = m_noisePreset == NoisePreset::SharpPreview ? 1 : m_noisePreset == NoisePreset::StillCapture ? 2 : 0;
     if (ImGui::Combo("Noise Preset", &noisePresetIndex, noisePresetItems, _countof(noisePresetItems)))
@@ -5530,6 +5760,8 @@ void D3D12PathTracingBackend::BuildRendererStatsUI()
     ImGui::Text("Output: %ux%u", m_width, m_height);
     ImGui::Text("Accumulated Samples: %u", m_accumulatedFrames);
     ImGui::Text("Mode: %s", PathtracingModeName(m_mode));
+    ImGui::Text("Denoise Backend: %s", DenoiseBackendDisplayName(m_denoiseBackend));
+    ImGui::Text("Active Denoise: %s", m_denoiseBackend == DenoiseBackend::Off ? "Off" : (IsDlssSelected() && m_dlssBackendRuntime.CanEvaluateRayReconstruction() ? "DLSS Ray Reconstruction" : "Internal"));
     ImGui::Text("Denoiser: %s (%d pass%s)", m_denoiserEnabled ? "On" : "Off", m_denoiserSpatialIterations, m_denoiserSpatialIterations == 1 ? "" : "es");
     ImGui::Text("Noise Preset: %s", NoisePresetDisplayName(m_noisePreset));
     ImGui::Text("Reconstruction: %s (%d history)", m_realtimeReconstruction ? "Realtime" : "Progressive", m_reconstructionMaxHistoryFrames);
@@ -5839,6 +6071,7 @@ void D3D12PathTracingBackend::OnDestroy()
         m_sceneConstantBuffer->Unmap(0, nullptr);
         m_mappedSceneConstants = nullptr;
     }
+    m_dlssBackendRuntime.Shutdown();
     CloseHandle(m_fenceEvent);
 }
 
@@ -5991,6 +6224,50 @@ void D3D12PathTracingBackend::ApplyNoisePreset(NoisePreset preset)
         m_denoiserStrength = 0.85f;
         break;
     }
+}
+
+bool D3D12PathTracingBackend::IsDlssSelected() const
+{
+    return m_denoiseBackend == DenoiseBackend::DlssRayReconstruction;
+}
+
+bool D3D12PathTracingBackend::ShouldRunInternalDenoiser() const
+{
+    if (m_denoiseBackend == DenoiseBackend::Off)
+    {
+        return false;
+    }
+    if (m_denoiseBackend == DenoiseBackend::Internal)
+    {
+        return m_denoiserEnabled || m_debugViewMode >= 16;
+    }
+    return !m_dlssBackendRuntime.CanEvaluateRayReconstruction() && (m_denoiserEnabled || m_debugViewMode >= 16);
+}
+
+std::string D3D12PathTracingBackend::BuildDlssStatusJson() const
+{
+    const DlssStatus& status = m_dlssBackendRuntime.Status();
+    std::ostringstream out;
+    out << "{";
+    out << "\"compiled\":" << (status.compiled ? "true" : "false") << ",";
+    out << "\"selected\":" << (IsDlssSelected() ? "true" : "false") << ",";
+    out << "\"active\":" << (IsDlssSelected() && status.evaluationReady ? "true" : "false") << ",";
+    out << "\"runtimeAvailable\":" << (status.runtimeAvailable ? "true" : "false") << ",";
+    out << "\"initialized\":" << (status.initialized ? "true" : "false") << ",";
+    out << "\"deviceRegistered\":" << (status.deviceRegistered ? "true" : "false") << ",";
+    out << "\"featureSupported\":" << (status.featureSupported ? "true" : "false") << ",";
+    out << "\"evaluationReady\":" << (status.evaluationReady ? "true" : "false") << ",";
+    out << "\"historyResetRequested\":" << (status.historyResetRequested ? "true" : "false") << ",";
+    out << "\"mode\":\"" << DlssModeName(m_dlssMode) << "\",";
+    out << "\"modeLabel\":\"" << DlssModeDisplayName(m_dlssMode) << "\",";
+    out << "\"renderResolution\":{\"width\":" << (status.recommendedRenderWidth > 0 ? status.recommendedRenderWidth : m_renderWidth)
+        << ",\"height\":" << (status.recommendedRenderHeight > 0 ? status.recommendedRenderHeight : m_renderHeight) << "},";
+    out << "\"outputResolution\":{\"width\":" << m_width << ",\"height\":" << m_height << "},";
+    out << "\"runtimePath\":\"" << cld::EscapeJson(WideToUtf8(status.runtimePath)) << "\",";
+    out << "\"lastError\":\"" << cld::EscapeJson(status.lastError) << "\",";
+    out << "\"fallbackReason\":\"" << cld::EscapeJson(status.fallbackReason) << "\"";
+    out << "}";
+    return out.str();
 }
 
 void D3D12PathTracingBackend::UpdateCameraMotionState()

@@ -8,9 +8,9 @@ English documentation: [MCP Server](mcp.md)
 
 下の screenshot は、MCP 対応 client から自然言語で camera と denoise の変更を指示し、D3D12LookDevPT 側で `lookdevpt.set_camera`、`lookdevpt.set_denoise`、`lookdevpt.get_state` が反映された流れです。
 
-![MCP で camera と denoise を変更した後の D3D12LookDevPT](../images/screenshot002.png)
+![MCP server を起動し recent local request を表示している D3D12LookDevPT](../images/screenshot005-mcp-server-runtime.png)
 
-上の viewport は MCP 経由の変更後の renderer です。Bearer token の値は redacted 済みです。実 token は screenshot や project file に入れないでください。
+上の viewport は MCP server 起動中の renderer で、local JSON-RPC request の履歴を表示しています。Bearer token の領域は redacted 済みです。実 token は screenshot や project file に入れないでください。
 
 ![Codex から MCP camera と denoise 変更を指示している例](../images/screenshot003.png)
 
@@ -347,12 +347,30 @@ interactive denoise preset の設定:
 }
 ```
 
-material factor の設定:
+DLSS Ray Reconstruction を選択する例。未対応環境では selected backend は保持しつつ internal denoiser に fallback します。詳細理由は `lookdevpt.get_state` の `denoise.dlss.fallbackReason` を確認してください。setup は [Optional DLSS Ray Reconstruction](dlss.ja.md) を参照してください。
 
 ```json
 {
   "jsonrpc": "2.0",
   "id": 15,
+  "method": "tools/call",
+  "params": {
+    "name": "lookdevpt.set_denoise",
+    "arguments": {
+      "backend": "dlss_rr",
+      "dlssMode": "quality",
+      "resetDlss": true
+    }
+  }
+}
+```
+
+material factor の設定:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 16,
   "method": "tools/call",
   "params": {
     "name": "lookdevpt.set_material",

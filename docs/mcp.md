@@ -8,9 +8,9 @@ Japanese documentation: [MCP サーバー](mcp.ja.md)
 
 The screenshots below show a typical local workflow: an MCP-capable client issues natural-language camera and denoise requests, and D3D12LookDevPT applies them through `lookdevpt.set_camera`, `lookdevpt.set_denoise`, and `lookdevpt.get_state`.
 
-![D3D12LookDevPT after MCP camera and denoise changes](../images/screenshot002.png)
+![D3D12LookDevPT running the MCP server with recent local requests](../images/screenshot005-mcp-server-runtime.png)
 
-The viewport above is the renderer after MCP-driven changes. The visible bearer token value is redacted; do not commit real MCP tokens in screenshots or project files.
+The viewport above is the renderer with the MCP server running, recent local JSON-RPC requests listed, and the bearer token area redacted. Do not commit real MCP tokens in screenshots or project files.
 
 ![Codex issuing MCP camera and denoise requests](../images/screenshot003.png)
 
@@ -347,12 +347,30 @@ Set the interactive denoise preset:
 }
 ```
 
-Set material factors:
+Select DLSS Ray Reconstruction when available. Unsupported machines keep the selected backend but fall back to the internal denoiser; read `denoise.dlss.fallbackReason` from `lookdevpt.get_state` for details. More setup notes are in [Optional DLSS Ray Reconstruction](dlss.md).
 
 ```json
 {
   "jsonrpc": "2.0",
   "id": 15,
+  "method": "tools/call",
+  "params": {
+    "name": "lookdevpt.set_denoise",
+    "arguments": {
+      "backend": "dlss_rr",
+      "dlssMode": "quality",
+      "resetDlss": true
+    }
+  }
+}
+```
+
+Set material factors:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 16,
   "method": "tools/call",
   "params": {
     "name": "lookdevpt.set_material",

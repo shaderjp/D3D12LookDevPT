@@ -37,6 +37,8 @@ struct SceneConstants
     float4 signalDenoiseOptions;
     float4 denoisePassOptions;
     float4 stabilityOptions;
+    float4 viewOptions;
+    float4 materialFocusOptions;
 };
 
 struct RestirReservoir

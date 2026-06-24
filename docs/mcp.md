@@ -171,18 +171,40 @@ Read tools:
 
 - `lookdevpt.get_stats`: returns adapter, DXR tier, resolution, scene counts, accumulated samples, active mode, reservoir count, denoiser status, and MCP queue state.
 - `lookdevpt.get_state`: returns scene path, project path, camera, lighting, path tracing, ReSTIR, denoise, and view state.
-- `lookdevpt.list_materials`: returns material names and editable PBR factors.
+- `lookdevpt.list_materials`: returns material names, usage counts, editable PBR factors, and texture slot state.
+- `lookdevpt.list_debug_views`: returns debug view ids, labels, and keys.
+- `lookdevpt.list_render_modes`: returns render mode labels and action values.
+- `lookdevpt.get_diagnostics`: returns scene/project/capture/MCP diagnostics.
 - `lookdevpt.capture_viewport`: captures the current final/debug viewport as PNG and returns an inline `image/png` plus `lookdevpt://captures/latest.png`.
+- `lookdevpt.capture_debug_pack`: captures up to eight debug views and returns resource links for each PNG.
 
 Validation:
 
 - `lookdevpt.validate_action`: accepts `{ "method": "...", "params": { ... } }` and runs the same action path with `validateOnly=true`.
+- `lookdevpt.run_actions`: validates and applies multiple action-layer calls as one MCP request. Validation failure prevents all mutation.
 
 Mutation tools:
 
+- `lookdevpt.reset_accumulation`
+- `lookdevpt.reset_denoise_history`
+- `lookdevpt.reset_reservoirs`
+- `lookdevpt.reset_camera_view`
+- `lookdevpt.set_camera_speed`
+- `lookdevpt.fit_camera_to_scene`
+- `lookdevpt.set_display_resolution`
+- `lookdevpt.load_project`
+- `lookdevpt.save_project`
+- `lookdevpt.save_project_as`
 - `lookdevpt.set_scene`
 - `lookdevpt.set_camera`
 - `lookdevpt.set_material`
+- `lookdevpt.set_material_texture`
+- `lookdevpt.reset_material`
+- `lookdevpt.save_material_variant`
+- `lookdevpt.apply_material_variant`
+- `lookdevpt.delete_material_variant`
+- `lookdevpt.set_material_view`
+- `lookdevpt.set_color_management`
 - `lookdevpt.set_lighting`
 - `lookdevpt.set_path_tracing`
 - `lookdevpt.set_restir`
@@ -195,9 +217,33 @@ Tool results primarily use `structuredContent`. A text content summary is also i
 
 - `lookdevpt://state`: current state JSON.
 - `lookdevpt://stats`: current stats JSON.
+- `lookdevpt://diagnostics`: scene, project, capture, and MCP diagnostics.
 - `lookdevpt://materials`: material list JSON.
+- `lookdevpt://materials/{index}`: one material object.
+- `lookdevpt://materials/{index}/textures`: source/current/override texture slots for one material.
+- `lookdevpt://material-variants`: saved per-material variant snapshots.
+- `lookdevpt://material-presets`: built-in and user material presets.
+- `lookdevpt://debug-views`: debug view ids, labels, and keys.
+- `lookdevpt://render-modes`: render modes and `set_path_tracing.mode` values.
+- `lookdevpt://project`: current project path and dirty flag.
+- `lookdevpt://scene/summary`: scene counts, bounds, lights, and asset paths.
 - `lookdevpt://actions/schema`: action names and JSON input schemas.
+- `lookdevpt://captures/index`: in-memory capture history.
 - `lookdevpt://captures/latest.png`: most recent PNG capture.
+- `lookdevpt://captures/{id}.png`: PNG from `capture_viewport` or `capture_debug_pack`.
+
+Resource templates:
+
+- `lookdevpt://captures/{id}.png`
+- `lookdevpt://materials/{index}`
+- `lookdevpt://materials/{index}/textures`
+
+Prompts:
+
+- `lookdevpt.inspect_scene`: read state/stats/materials/diagnostics and summarize the scene.
+- `lookdevpt.tune_denoise`: propose and apply stable denoise settings through validation.
+- `lookdevpt.setup_camera_shot`: fit/refine a camera shot using scene bounds and state.
+- `lookdevpt.capture_debug_review`: capture a debug pack and summarize visible issues.
 
 Example resource read:
 
@@ -301,7 +347,7 @@ Set the interactive denoise preset:
 }
 ```
 
-Capture the viewport:
+Set material factors:
 
 ```json
 {
@@ -309,8 +355,174 @@ Capture the viewport:
   "id": 15,
   "method": "tools/call",
   "params": {
+    "name": "lookdevpt.set_material",
+    "arguments": {
+      "index": 0,
+      "baseColor": [0.9, 0.76, 0.54, 1.0],
+      "roughness": 0.42,
+      "metallic": 0.0
+    }
+  }
+}
+```
+
+Override or clear a material texture slot:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 16,
+  "method": "tools/call",
+  "params": {
+    "name": "lookdevpt.set_material_texture",
+    "arguments": {
+      "index": 0,
+      "slot": "baseColor",
+      "path": "D:\\LookDevTextures\\paint_basecolor.png"
+    }
+  }
+}
+```
+
+Use `"clear": true` to remove the slot override, or `"resetToSource": true` to restore the imported source texture for that slot.
+
+Save and apply a material variant:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 17,
+  "method": "tools/call",
+  "params": {
+    "name": "lookdevpt.save_material_variant",
+    "arguments": {
+      "index": 0,
+      "variant": "warm rough"
+    }
+  }
+}
+```
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 18,
+  "method": "tools/call",
+  "params": {
+    "name": "lookdevpt.apply_material_variant",
+    "arguments": {
+      "index": 0,
+      "variant": "warm rough"
+    }
+  }
+}
+```
+
+Focus one material and adjust the final view transform:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 19,
+  "method": "tools/call",
+  "params": {
+    "name": "lookdevpt.run_actions",
+    "arguments": {
+      "actions": [
+        {
+          "method": "set_material_view",
+          "params": { "selectedMaterial": 0, "focusMode": "dim" }
+        },
+        {
+          "method": "set_color_management",
+          "params": { "toneMapper": "aces", "exposure": 0.0, "gamma": 2.2 }
+        }
+      ],
+      "validateOnly": false,
+      "stopOnError": true
+    }
+  }
+}
+```
+
+Capture the viewport:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 20,
+  "method": "tools/call",
+  "params": {
     "name": "lookdevpt.capture_viewport",
     "arguments": {}
+  }
+}
+```
+
+Run a validated batch:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 21,
+  "method": "tools/call",
+  "params": {
+    "name": "lookdevpt.run_actions",
+    "arguments": {
+      "actions": [
+        {
+          "method": "set_path_tracing",
+          "params": { "mode": "restir_gi_di", "samplesPerFrame": 2 }
+        },
+        {
+          "method": "set_denoise",
+          "params": { "preset": "interactive_stable", "resetHistory": true }
+        }
+      ],
+      "validateOnly": false,
+      "stopOnError": true
+    }
+  }
+}
+```
+
+Capture a debug review pack:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 22,
+  "method": "tools/call",
+  "params": {
+    "name": "lookdevpt.capture_debug_pack",
+    "arguments": {
+      "views": [
+        "Final",
+        "Base Color",
+        "World Normal",
+        "Roughness",
+        "Metallic",
+        "Direct Signal",
+        "Indirect Signal",
+        "History Confidence"
+      ]
+    }
+  }
+}
+```
+
+Save a project without a dialog:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 23,
+  "method": "tools/call",
+  "params": {
+    "name": "lookdevpt.save_project_as",
+    "arguments": {
+      "path": "D:\\Git\\D3D12LookDevPT\\projects\\bistro.lookdevpt.json"
+    }
   }
 }
 ```

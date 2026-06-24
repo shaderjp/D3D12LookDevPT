@@ -15,24 +15,24 @@ The screenshot above uses the Bistro Exterior scene as a local test asset. Large
 - Direct3D 12 Agility SDK and DXC from NuGet.
 - Assimp scene import for static glTF/GLB/FBX/OBJ meshes.
 - DirectXTex texture loading for PNG/JPEG/TGA/DDS/HDR paths and compressed embedded textures extracted by Assimp.
-- PBR-oriented material slots: base color, normal, roughness, metallic, occlusion, emissive, alpha mask.
+- PBR-oriented material slots: base color, normal, roughness, metallic, occlusion, emissive, alpha mask, texture overrides, material variants, and presets.
 - DXR BLAS/TLAS, shader tables, progressive accumulation, debug views, ReSTIR reservoirs, and lightweight AOV denoising.
 - Project files saved as `.lookdevpt.json`.
 - A local MCP server for automation via the same validation-oriented action layer used by the UI.
 
 ## UI
 
-The app starts at 1920 x 1080. The first frame creates a main ImGui DockSpace with panels for `Viewport`, `Scene`, `Material`, `Lighting`, `Path Tracing`, `ReSTIR`, `Denoise`, and `Diagnostics / Stats`. UI text uses an 18 px default font with scaled spacing. The central dock node is pass-through so the DXR output remains visible behind docked tools. The material panel edits PBR factors and refreshes the GPU material buffer; texture reassignment is intentionally left for a later version.
+The app starts at 1920 x 1080. The first frame creates a main ImGui DockSpace with panels for `Viewport`, `Scene`, `Material`, `Lighting`, `Path Tracing`, `ReSTIR`, `Denoise`, and `Diagnostics / Stats`. UI text uses an 18 px default font with scaled spacing. The central dock node is pass-through so the DXR output remains visible behind docked tools. The material panel has `Properties`, `Textures`, `Variants`, and `Presets` tabs for PBR factor edits, texture slot overrides, A/B review snapshots, user presets, and material focus display.
 
 Changing the display resolution resizes the DXGI swapchain, RTVs, DXR output, accumulation, reservoir, and denoise resources together so ImGui rendering and hit testing stay in sync.
 
 ## MCP / Action Layer
 
-`D3D12PathTracingBackend::ApplyAction(method, params, diagnostics, validateOnly)` currently accepts `set_scene`, `set_camera`, `set_material`, `set_lighting`, `set_path_tracing`, `set_restir`, `set_denoise`, and `set_view`.
+`D3D12PathTracingBackend::ApplyAction(method, params, diagnostics, validateOnly)` currently accepts scene, camera, material, lighting, path tracing, ReSTIR, denoise, view, material texture, material variant, material view, and color-management actions.
 
 The dockable `MCP Server` panel can start a localhost MCP endpoint at `http://127.0.0.1:<port>/mcp`. The server is disabled by default, uses a bearer token stored in `%APPDATA%\D3D12LookDevPT\settings.json`, and supports read-only, confirm-mutations, and allow-mutations access modes. MCP mutations are queued onto the main thread before they touch D3D12 or ImGui state.
 
-See [MCP Server](docs/mcp.md) for VS Code configuration, JSON-RPC examples, tools/resources, screenshots of an MCP-driven camera/denoise workflow, and troubleshooting.
+MCP also exposes project save/load, camera fitting, display resolution changes, reset tools, debug-view capture packs, material texture/variant controls, capture resources, and reusable prompts. See [MCP Server](docs/mcp.md) for VS Code configuration, JSON-RPC examples, tools/resources/prompts, screenshots of an MCP-driven camera/denoise workflow, and troubleshooting.
 
 ## Build
 

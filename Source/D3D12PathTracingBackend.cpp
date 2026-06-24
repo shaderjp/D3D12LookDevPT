@@ -10,10 +10,13 @@
 #include <DirectXTex.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cfloat>
 #include <cmath>
 #include <commdlg.h>
+#include <cstddef>
 #include <cstdlib>
+#include <cwctype>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -25,29 +28,26 @@ extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg
 
 namespace
 {
-    void ApplyBistroDisplayResolution(HWND hwnd, int presetIndex)
+    void ApplyClientDisplayResolution(HWND hwnd, UINT width, UINT height)
     {
         if (hwnd == nullptr)
         {
             return;
         }
 
-        constexpr UINT Widths[] = { 1280u, 1920u, 3840u };
-        constexpr UINT Heights[] = { 720u, 1080u, 2160u };
-        if (presetIndex < 0)
-        {
-            presetIndex = 0;
-        }
-        if (presetIndex > 2)
-        {
-            presetIndex = 2;
-        }
-
-        RECT rect = { 0, 0, static_cast<LONG>(Widths[presetIndex]), static_cast<LONG>(Heights[presetIndex]) };
+        RECT rect = { 0, 0, static_cast<LONG>(width), static_cast<LONG>(height) };
         const DWORD style = static_cast<DWORD>(GetWindowLongPtr(hwnd, GWL_STYLE));
         const DWORD exStyle = static_cast<DWORD>(GetWindowLongPtr(hwnd, GWL_EXSTYLE));
         AdjustWindowRectEx(&rect, style, GetMenu(hwnd) != nullptr, exStyle);
         SetWindowPos(hwnd, nullptr, 0, 0, rect.right - rect.left, rect.bottom - rect.top, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+    }
+
+    void ApplyBistroDisplayResolution(HWND hwnd, int presetIndex)
+    {
+        constexpr UINT Widths[] = { 1280u, 1920u, 3840u };
+        constexpr UINT Heights[] = { 720u, 1080u, 2160u };
+        presetIndex = std::clamp(presetIndex, 0, 2);
+        ApplyClientDisplayResolution(hwnd, Widths[presetIndex], Heights[presetIndex]);
     }
 
     void SubmitMainDockSpace()
@@ -162,6 +162,110 @@ namespace
         return mode == PathTracingMode::ReSTIRDI || mode == PathTracingMode::ReSTIRCombined;
     }
 
+    constexpr const char* RenderModeLabels[] = { "Baseline PT", "ReSTIR GI", "ReSTIR DI", "ReSTIR GI + DI" };
+    constexpr const char* RenderModeValues[] = { "baseline", "restir_gi", "restir_di", "restir_gi_di" };
+    constexpr const char* TextureSlotLabels[] = { "Base Color", "Normal", "Roughness", "Metallic", "Occlusion", "Emissive" };
+    constexpr const char* TextureSlotKeys[] = { "baseColor", "normal", "roughness", "metallic", "occlusion", "emissive" };
+    constexpr const char* MaterialFocusLabels[] = { "Normal", "Isolate", "Dim" };
+    constexpr const char* ToneMapperLabels[] = { "None", "Reinhard", "ACES" };
+    constexpr const char* DebugViewLabels[] =
+    {
+        "Final", "Base Color", "World Normal", "Normal Texture", "Roughness", "Metallic", "Emissive",
+        "Hit Distance", "Direct NEE", "Indirect", "Bounce Count", "Accumulation Samples", "Sky",
+        "Reservoir Weight", "Temporal Reuse", "Spatial Reuse", "Current Radiance", "Temporal Output",
+        "History Length", "Variance", "Motion Vector", "Disocclusion Mask", "Denoised Indirect",
+        "Denoise Delta", "Reservoir Age", "Reservoir Validity", "GI Reservoir Weight",
+        "DI Reservoir Weight", "GI Temporal Reuse", "DI Temporal Reuse", "GI Spatial Reuse",
+        "DI Spatial Reuse", "Direct Signal", "Indirect Signal", "Residual Signal", "Temporal Input",
+        "Temporal Output Detail", "A-Trous Output", "Reactive Mask", "History Match", "History Confidence"
+    };
+
+    std::string KeyFromLabel(const std::string& label)
+    {
+        std::string key;
+        key.reserve(label.size());
+        bool lastUnderscore = false;
+        for (const unsigned char ch : label)
+        {
+            if (std::isalnum(ch))
+            {
+                key.push_back(static_cast<char>(std::tolower(ch)));
+                lastUnderscore = false;
+            }
+            else if (!lastUnderscore)
+            {
+                key.push_back('_');
+                lastUnderscore = true;
+            }
+        }
+        while (!key.empty() && key.back() == '_')
+        {
+            key.pop_back();
+        }
+        return key;
+    }
+
+    std::string BuildDebugViewsJson()
+    {
+        std::ostringstream out;
+        out << "{\"debugViews\":[";
+        for (int i = 0; i < static_cast<int>(_countof(DebugViewLabels)); ++i)
+        {
+            if (i > 0)
+            {
+                out << ",";
+            }
+            const std::string label = DebugViewLabels[i];
+            out << "{\"id\":" << i << ",\"label\":\"" << cld::EscapeJson(label) << "\",\"key\":\"" << KeyFromLabel(label) << "\"}";
+        }
+        out << "]}";
+        return out.str();
+    }
+
+    std::string BuildRenderModesJson()
+    {
+        std::ostringstream out;
+        out << "{\"renderModes\":[";
+        for (int i = 0; i < static_cast<int>(_countof(RenderModeLabels)); ++i)
+        {
+            if (i > 0)
+            {
+                out << ",";
+            }
+            out << "{\"id\":" << i << ",\"label\":\"" << RenderModeLabels[i] << "\",\"value\":\"" << RenderModeValues[i] << "\"}";
+        }
+        out << "]}";
+        return out.str();
+    }
+
+    bool TryParseDebugView(const cld::JsonValue& value, int& debugView)
+    {
+        if (value.type == cld::JsonValue::Type::Number)
+        {
+            const int index = static_cast<int>(value.number);
+            if (index >= 0 && index < static_cast<int>(_countof(DebugViewLabels)))
+            {
+                debugView = index;
+                return true;
+            }
+            return false;
+        }
+        if (value.type != cld::JsonValue::Type::String)
+        {
+            return false;
+        }
+        const std::string key = KeyFromLabel(value.string);
+        for (int i = 0; i < static_cast<int>(_countof(DebugViewLabels)); ++i)
+        {
+            if (value.string == DebugViewLabels[i] || key == KeyFromLabel(DebugViewLabels[i]))
+            {
+                debugView = i;
+                return true;
+            }
+        }
+        return false;
+    }
+
     float Halton(uint32_t index, uint32_t base)
     {
         float f = 1.0f;
@@ -209,6 +313,117 @@ namespace
             return PathTracingMode::ReSTIRCombined;
         }
         return fallback;
+    }
+
+    const char* ToneMapperName(D3D12PathTracingBackend::ToneMapper toneMapper)
+    {
+        switch (toneMapper)
+        {
+        case D3D12PathTracingBackend::ToneMapper::None:
+            return "none";
+        case D3D12PathTracingBackend::ToneMapper::Reinhard:
+            return "reinhard";
+        default:
+            return "aces";
+        }
+    }
+
+    bool TryParseToneMapper(const std::string& name, D3D12PathTracingBackend::ToneMapper& toneMapper)
+    {
+        if (name.empty() || name == "aces" || name == "ACES" || name == "Aces")
+        {
+            toneMapper = D3D12PathTracingBackend::ToneMapper::Aces;
+            return true;
+        }
+        if (name == "none" || name == "None" || name == "raw")
+        {
+            toneMapper = D3D12PathTracingBackend::ToneMapper::None;
+            return true;
+        }
+        if (name == "reinhard" || name == "Reinhard")
+        {
+            toneMapper = D3D12PathTracingBackend::ToneMapper::Reinhard;
+            return true;
+        }
+        return false;
+    }
+
+    const char* MaterialFocusModeName(D3D12PathTracingBackend::MaterialFocusMode mode)
+    {
+        switch (mode)
+        {
+        case D3D12PathTracingBackend::MaterialFocusMode::Isolate:
+            return "isolate";
+        case D3D12PathTracingBackend::MaterialFocusMode::Dim:
+            return "dim";
+        default:
+            return "normal";
+        }
+    }
+
+    bool TryParseMaterialFocusMode(const std::string& name, D3D12PathTracingBackend::MaterialFocusMode& mode)
+    {
+        if (name.empty() || name == "normal" || name == "Normal")
+        {
+            mode = D3D12PathTracingBackend::MaterialFocusMode::Normal;
+            return true;
+        }
+        if (name == "isolate" || name == "Isolate")
+        {
+            mode = D3D12PathTracingBackend::MaterialFocusMode::Isolate;
+            return true;
+        }
+        if (name == "dim" || name == "Dim")
+        {
+            mode = D3D12PathTracingBackend::MaterialFocusMode::Dim;
+            return true;
+        }
+        return false;
+    }
+
+    bool IsSupportedMaterialTextureExtension(const std::filesystem::path& path)
+    {
+        std::wstring ext = path.extension().wstring();
+        std::transform(ext.begin(), ext.end(), ext.begin(), [](wchar_t ch)
+        {
+            return static_cast<wchar_t>(std::towlower(ch));
+        });
+        return ext == L".png" || ext == L".jpg" || ext == L".jpeg" || ext == L".tga" ||
+            ext == L".dds" || ext == L".hdr" || ext == L".bmp";
+    }
+
+    std::wstring MaterialPresetDirectory()
+    {
+        std::array<wchar_t, 32768> appData = {};
+        size_t length = 0;
+        if (_wgetenv_s(&length, appData.data(), appData.size(), L"APPDATA") != 0 || length == 0)
+        {
+            std::array<wchar_t, MAX_PATH> tempPath = {};
+            const DWORD tempLength = GetTempPathW(static_cast<DWORD>(tempPath.size()), tempPath.data());
+            if (tempLength > 0 && tempLength < tempPath.size())
+            {
+                return (std::filesystem::path(tempPath.data()) / L"D3D12LookDevPT" / L"materials").wstring();
+            }
+            return L"materials";
+        }
+        return (std::filesystem::path(appData.data()) / L"D3D12LookDevPT" / L"materials").wstring();
+    }
+
+    std::string SafeFileName(std::string text)
+    {
+        for (char& ch : text)
+        {
+            const unsigned char c = static_cast<unsigned char>(ch);
+            if (!std::isalnum(c) && ch != '_' && ch != '-')
+            {
+                ch = '_';
+            }
+        }
+        if (text.empty())
+        {
+            text = "preset";
+        }
+        return text;
     }
 
     const char* NoisePresetName(D3D12PathTracingBackend::NoisePreset preset)
@@ -766,6 +981,7 @@ void D3D12PathTracingBackend::LoadAssets()
     m_defaultCameraPitch = XMConvertToRadians(4.0f);
     ResetCameraView();
     ResetCameraSpeeds();
+    InitializeMaterialLookDevState(true);
 
     CreateGpuResourcesForCurrentScene();
     InitializeImGui();
@@ -877,6 +1093,7 @@ bool D3D12PathTracingBackend::LoadScenePath(const std::wstring& path, std::strin
         m_scene = ConvertImportedScene(imported.scene);
         m_scenePath = path;
         m_sceneDiagnostics = imported.diagnostics;
+        InitializeMaterialLookDevState(true);
 
         const float sx = m_scene.boundsMax.x - m_scene.boundsMin.x;
         const float sy = m_scene.boundsMax.y - m_scene.boundsMin.y;
@@ -929,6 +1146,397 @@ bool D3D12PathTracingBackend::LoadEnvironmentPath(const std::wstring& path, std:
     }
 }
 
+void D3D12PathTracingBackend::InitializeMaterialLookDevState(bool clearVariants)
+{
+    m_sourceMaterials = m_scene.materials;
+    m_textureOverrideEnabled.assign(m_scene.materials.size(), {});
+    m_selectedMaterial = std::clamp(m_selectedMaterial, 0, (std::max)(0, static_cast<int>(m_scene.materials.size()) - 1));
+    m_hasMaterialCompareA = false;
+    m_hasMaterialCompareB = false;
+    if (clearVariants)
+    {
+        m_materialVariants.clear();
+    }
+    RebuildMaterialUsage();
+    LoadMaterialPresets();
+}
+
+void D3D12PathTracingBackend::RebuildMaterialUsage()
+{
+    m_materialUsage.assign(m_scene.materials.size(), {});
+    for (const Bistro::DrawItem& draw : m_scene.draws)
+    {
+        if (draw.materialIndex >= m_materialUsage.size())
+        {
+            continue;
+        }
+        MaterialUsage& usage = m_materialUsage[draw.materialIndex];
+        ++usage.meshCount;
+        usage.triangleCount += draw.indexCount / 3u;
+    }
+}
+
+int D3D12PathTracingBackend::ResolveMaterialIndex(const cld::JsonValue& params) const
+{
+    int materialIndex = static_cast<int>(cld::JsonNumberOr(params, "index", -1.0));
+    const std::string materialNameUtf8 = cld::JsonStringOr(params, "name");
+    if (materialIndex < 0 && !materialNameUtf8.empty())
+    {
+        const std::wstring materialName = Utf8ToWide(materialNameUtf8);
+        for (size_t i = 0; i < m_scene.materials.size(); ++i)
+        {
+            if (m_scene.materials[i].name == materialName)
+            {
+                materialIndex = static_cast<int>(i);
+                break;
+            }
+        }
+    }
+    if (materialIndex < 0 || static_cast<size_t>(materialIndex) >= m_scene.materials.size())
+    {
+        return -1;
+    }
+    return materialIndex;
+}
+
+D3D12PathTracingBackend::MaterialSnapshot D3D12PathTracingBackend::CaptureMaterialSnapshot(int materialIndex) const
+{
+    MaterialSnapshot snapshot;
+    if (materialIndex < 0 || static_cast<size_t>(materialIndex) >= m_scene.materials.size())
+    {
+        return snapshot;
+    }
+    const Bistro::Material& material = m_scene.materials[materialIndex];
+    snapshot.baseColorFactor = material.baseColorFactor;
+    snapshot.emissiveFactor = material.emissiveFactor;
+    snapshot.roughnessFactor = material.roughnessFactor;
+    snapshot.metallicFactor = material.metallicFactor;
+    snapshot.occlusionStrength = material.occlusionStrength;
+    snapshot.normalStrength = material.normalStrength;
+    snapshot.alphaCutoff = material.alphaCutoff;
+    snapshot.alphaMasked = material.alphaMasked;
+    snapshot.packedOcclusionRoughnessMetallic = material.packedOcclusionRoughnessMetallic;
+    snapshot.textures = material.textures;
+    if (static_cast<size_t>(materialIndex) < m_textureOverrideEnabled.size())
+    {
+        snapshot.textureOverrideEnabled = m_textureOverrideEnabled[materialIndex];
+    }
+    return snapshot;
+}
+
+void D3D12PathTracingBackend::ApplyMaterialSnapshot(int materialIndex, const MaterialSnapshot& snapshot, bool useSnapshotTextureFlags)
+{
+    if (materialIndex < 0 || static_cast<size_t>(materialIndex) >= m_scene.materials.size())
+    {
+        return;
+    }
+    Bistro::Material& material = m_scene.materials[materialIndex];
+    material.baseColorFactor = snapshot.baseColorFactor;
+    material.emissiveFactor = snapshot.emissiveFactor;
+    material.roughnessFactor = snapshot.roughnessFactor;
+    material.metallicFactor = snapshot.metallicFactor;
+    material.occlusionStrength = snapshot.occlusionStrength;
+    material.normalStrength = snapshot.normalStrength;
+    material.alphaCutoff = snapshot.alphaCutoff;
+    material.alphaMasked = snapshot.alphaMasked;
+    material.packedOcclusionRoughnessMetallic = snapshot.packedOcclusionRoughnessMetallic;
+    material.textures = snapshot.textures;
+    if (useSnapshotTextureFlags && static_cast<size_t>(materialIndex) < m_textureOverrideEnabled.size())
+    {
+        m_textureOverrideEnabled[materialIndex] = snapshot.textureOverrideEnabled;
+    }
+}
+
+void D3D12PathTracingBackend::ResetMaterialToSource(int materialIndex)
+{
+    if (materialIndex < 0 || static_cast<size_t>(materialIndex) >= m_scene.materials.size() ||
+        static_cast<size_t>(materialIndex) >= m_sourceMaterials.size())
+    {
+        return;
+    }
+    m_scene.materials[materialIndex] = m_sourceMaterials[materialIndex];
+    if (static_cast<size_t>(materialIndex) < m_textureOverrideEnabled.size())
+    {
+        m_textureOverrideEnabled[materialIndex].fill(false);
+    }
+}
+
+bool D3D12PathTracingBackend::ValidateMaterialTexturePath(const std::wstring& path, std::string& diagnostics) const
+{
+    if (path.empty())
+    {
+        return true;
+    }
+    if (!std::filesystem::exists(path))
+    {
+        diagnostics = "Texture path does not exist.";
+        return false;
+    }
+    if (!IsSupportedMaterialTextureExtension(path))
+    {
+        diagnostics = "Texture extension is not supported.";
+        return false;
+    }
+
+    const uint8_t fallback[] = { 255, 255, 255, 255 };
+    const Bistro::TextureData texture = Bistro::LoadTextureD3D12(path, false, fallback);
+    if (texture.fallback)
+    {
+        diagnostics = "Texture could not be decoded.";
+        return false;
+    }
+    return true;
+}
+
+bool D3D12PathTracingBackend::TryParseTextureSlot(const cld::JsonValue& value, UINT& slot) const
+{
+    if (value.type == cld::JsonValue::Type::Number)
+    {
+        const int index = static_cast<int>(value.number);
+        if (index >= 0 && index < static_cast<int>(TextureSlotCount))
+        {
+            slot = static_cast<UINT>(index);
+            return true;
+        }
+        return false;
+    }
+    if (value.type != cld::JsonValue::Type::String)
+    {
+        return false;
+    }
+
+    const std::string key = KeyFromLabel(value.string);
+    for (UINT i = 0; i < TextureSlotCount; ++i)
+    {
+        if (value.string == TextureSlotKeys[i] || value.string == TextureSlotLabels[i] || key == KeyFromLabel(TextureSlotLabels[i]))
+        {
+            slot = i;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool D3D12PathTracingBackend::ApplyMaterialTextureOverride(int materialIndex, UINT slot, const std::wstring& path, bool enableOverride, std::string& diagnostics)
+{
+    if (materialIndex < 0 || static_cast<size_t>(materialIndex) >= m_scene.materials.size() || slot >= TextureSlotCount)
+    {
+        diagnostics = "Material index or texture slot is invalid.";
+        return false;
+    }
+    if (enableOverride && !ValidateMaterialTexturePath(path, diagnostics))
+    {
+        return false;
+    }
+
+    m_scene.materials[materialIndex].textures[slot] = enableOverride
+        ? path
+        : (static_cast<size_t>(materialIndex) < m_sourceMaterials.size() ? m_sourceMaterials[materialIndex].textures[slot] : std::wstring());
+    if (static_cast<size_t>(materialIndex) < m_textureOverrideEnabled.size())
+    {
+        m_textureOverrideEnabled[materialIndex][slot] = enableOverride;
+    }
+    diagnostics = "Material texture accepted.";
+    return true;
+}
+
+void D3D12PathTracingBackend::LoadMaterialPresets()
+{
+    m_materialPresets.clear();
+
+    auto addPreset = [&](const char* name, const char* category, const XMFLOAT4& baseColor, float roughness, float metallic)
+    {
+        MaterialPreset preset;
+        preset.name = name;
+        preset.category = category;
+        preset.snapshot.baseColorFactor = baseColor;
+        preset.snapshot.roughnessFactor = roughness;
+        preset.snapshot.metallicFactor = metallic;
+        m_materialPresets.push_back(preset);
+    };
+
+    addPreset("Neutral Clay", "Built-in", XMFLOAT4(0.70f, 0.68f, 0.62f, 1.0f), 0.55f, 0.0f);
+    addPreset("Matte Plastic", "Built-in", XMFLOAT4(0.18f, 0.22f, 0.28f, 1.0f), 0.72f, 0.0f);
+    addPreset("Brushed Dark Metal", "Built-in", XMFLOAT4(0.58f, 0.60f, 0.62f, 1.0f), 0.34f, 1.0f);
+    addPreset("Warm Emissive", "Built-in", XMFLOAT4(1.0f, 0.78f, 0.42f, 1.0f), 0.48f, 0.0f);
+    m_materialPresets.back().snapshot.emissiveFactor = XMFLOAT4(1.0f, 0.62f, 0.22f, 1.8f);
+
+    const std::filesystem::path presetDir(MaterialPresetDirectory());
+    if (!std::filesystem::exists(presetDir))
+    {
+        return;
+    }
+
+    for (const std::filesystem::directory_entry& entry : std::filesystem::directory_iterator(presetDir))
+    {
+        if (!entry.is_regular_file() || entry.path().extension() != L".json")
+        {
+            continue;
+        }
+        std::ifstream file(entry.path(), std::ios::binary);
+        if (!file)
+        {
+            continue;
+        }
+        std::stringstream buffer;
+        buffer << file.rdbuf();
+        try
+        {
+            const cld::JsonValue root = cld::JsonParser(buffer.str()).Parse();
+            if (root.type != cld::JsonValue::Type::Object)
+            {
+                continue;
+            }
+            MaterialPreset preset;
+            preset.name = cld::JsonStringOr(root, "name", entry.path().stem().string());
+            preset.category = cld::JsonStringOr(root, "category", "User");
+            preset.sourcePath = entry.path().wstring();
+            const std::array<float, 4> baseColor = cld::JsonFloat4Or(root, "baseColor", Float4ToArray(preset.snapshot.baseColorFactor));
+            const std::array<float, 4> emissive = cld::JsonFloat4Or(root, "emissive", Float4ToArray(preset.snapshot.emissiveFactor));
+            preset.snapshot.baseColorFactor = XMFLOAT4(baseColor[0], baseColor[1], baseColor[2], baseColor[3]);
+            preset.snapshot.emissiveFactor = XMFLOAT4(emissive[0], emissive[1], emissive[2], emissive[3]);
+            preset.snapshot.roughnessFactor = std::clamp(static_cast<float>(cld::JsonNumberOr(root, "roughness", preset.snapshot.roughnessFactor)), 0.02f, 1.0f);
+            preset.snapshot.metallicFactor = std::clamp(static_cast<float>(cld::JsonNumberOr(root, "metallic", preset.snapshot.metallicFactor)), 0.0f, 1.0f);
+            preset.snapshot.occlusionStrength = std::clamp(static_cast<float>(cld::JsonNumberOr(root, "occlusionStrength", preset.snapshot.occlusionStrength)), 0.0f, 2.0f);
+            preset.snapshot.normalStrength = std::clamp(static_cast<float>(cld::JsonNumberOr(root, "normalStrength", preset.snapshot.normalStrength)), 0.0f, 2.0f);
+            preset.snapshot.alphaCutoff = std::clamp(static_cast<float>(cld::JsonNumberOr(root, "alphaCutoff", preset.snapshot.alphaCutoff)), 0.0f, 1.0f);
+            preset.snapshot.alphaMasked = cld::JsonBoolOr(root, "alphaMasked", preset.snapshot.alphaMasked);
+            preset.snapshot.packedOcclusionRoughnessMetallic = cld::JsonBoolOr(root, "packedORM", preset.snapshot.packedOcclusionRoughnessMetallic);
+            if (const cld::JsonValue* textures = cld::FindMember(root, "textures"); textures && textures->type == cld::JsonValue::Type::Object)
+            {
+                for (UINT slot = 0; slot < TextureSlotCount; ++slot)
+                {
+                    const std::string pathText = cld::JsonStringOr(*textures, TextureSlotKeys[slot]);
+                    if (pathText.empty())
+                    {
+                        continue;
+                    }
+                    std::filesystem::path texturePath = Utf8ToWide(pathText);
+                    if (texturePath.is_relative())
+                    {
+                        texturePath = entry.path().parent_path() / texturePath;
+                    }
+                    std::string textureDiagnostics;
+                    if (ValidateMaterialTexturePath(texturePath.wstring(), textureDiagnostics))
+                    {
+                        preset.snapshot.textures[slot] = texturePath.wstring();
+                        preset.snapshot.textureOverrideEnabled[slot] = true;
+                    }
+                }
+            }
+            m_materialPresets.push_back(std::move(preset));
+        }
+        catch (const std::exception&)
+        {
+        }
+    }
+}
+
+bool D3D12PathTracingBackend::SaveUserMaterialPreset(const std::string& name, int materialIndex, std::string& diagnostics)
+{
+    if (materialIndex < 0 || static_cast<size_t>(materialIndex) >= m_scene.materials.size())
+    {
+        diagnostics = "Material index was not found.";
+        return false;
+    }
+    const std::filesystem::path presetDir(MaterialPresetDirectory());
+    std::error_code ec;
+    std::filesystem::create_directories(presetDir, ec);
+    if (ec)
+    {
+        diagnostics = "Could not create material preset directory.";
+        return false;
+    }
+
+    const std::string safeName = SafeFileName(name.empty() ? "preset" : name);
+    const std::filesystem::path presetPath = presetDir / Utf8ToWide(safeName + ".json");
+    std::ofstream file(presetPath, std::ios::binary);
+    if (!file)
+    {
+        diagnostics = "Could not write material preset.";
+        return false;
+    }
+
+    const Bistro::Material& material = m_scene.materials[materialIndex];
+    file << "{\n";
+    file << "  \"name\": \"" << cld::EscapeJson(name.empty() ? safeName : name) << "\",\n";
+    file << "  \"category\": \"User\",\n";
+    file << "  \"baseColor\": [" << material.baseColorFactor.x << ", " << material.baseColorFactor.y << ", " << material.baseColorFactor.z << ", " << material.baseColorFactor.w << "],\n";
+    file << "  \"emissive\": [" << material.emissiveFactor.x << ", " << material.emissiveFactor.y << ", " << material.emissiveFactor.z << ", " << material.emissiveFactor.w << "],\n";
+    file << "  \"roughness\": " << material.roughnessFactor << ",\n";
+    file << "  \"metallic\": " << material.metallicFactor << ",\n";
+    file << "  \"occlusionStrength\": " << material.occlusionStrength << ",\n";
+    file << "  \"normalStrength\": " << material.normalStrength << ",\n";
+    file << "  \"alphaCutoff\": " << material.alphaCutoff << ",\n";
+    file << "  \"alphaMasked\": " << (material.alphaMasked ? "true" : "false") << ",\n";
+    file << "  \"packedORM\": " << (material.packedOcclusionRoughnessMetallic ? "true" : "false") << ",\n";
+    file << "  \"textures\": {";
+    bool wroteTexture = false;
+    for (UINT slot = 0; slot < TextureSlotCount; ++slot)
+    {
+        if (static_cast<size_t>(materialIndex) >= m_textureOverrideEnabled.size() || !m_textureOverrideEnabled[materialIndex][slot])
+        {
+            continue;
+        }
+        if (wroteTexture)
+        {
+            file << ", ";
+        }
+        file << "\"" << TextureSlotKeys[slot] << "\": \"" << cld::EscapeJson(WideToUtf8(material.textures[slot])) << "\"";
+        wroteTexture = true;
+    }
+    file << "}\n";
+    file << "}\n";
+    diagnostics = "Material preset saved.";
+    LoadMaterialPresets();
+    return true;
+}
+
+bool D3D12PathTracingBackend::ApplyMaterialPreset(int materialIndex, size_t presetIndex, std::string& diagnostics)
+{
+    if (materialIndex < 0 || static_cast<size_t>(materialIndex) >= m_scene.materials.size() || presetIndex >= m_materialPresets.size())
+    {
+        diagnostics = "Material preset or material index was not found.";
+        return false;
+    }
+
+    const MaterialSnapshot before = CaptureMaterialSnapshot(materialIndex);
+    MaterialSnapshot snapshot = CaptureMaterialSnapshot(materialIndex);
+    const MaterialSnapshot& preset = m_materialPresets[presetIndex].snapshot;
+    snapshot.baseColorFactor = preset.baseColorFactor;
+    snapshot.emissiveFactor = preset.emissiveFactor;
+    snapshot.roughnessFactor = preset.roughnessFactor;
+    snapshot.metallicFactor = preset.metallicFactor;
+    snapshot.occlusionStrength = preset.occlusionStrength;
+    snapshot.normalStrength = preset.normalStrength;
+    snapshot.alphaCutoff = preset.alphaCutoff;
+    snapshot.alphaMasked = preset.alphaMasked;
+    snapshot.packedOcclusionRoughnessMetallic = preset.packedOcclusionRoughnessMetallic;
+    for (UINT slot = 0; slot < TextureSlotCount; ++slot)
+    {
+        if (preset.textureOverrideEnabled[slot])
+        {
+            snapshot.textures[slot] = preset.textures[slot];
+            snapshot.textureOverrideEnabled[slot] = true;
+        }
+    }
+
+    ApplyMaterialSnapshot(materialIndex, snapshot, true);
+    try
+    {
+        CreateGpuResourcesForCurrentScene();
+    }
+    catch (const std::exception& ex)
+    {
+        ApplyMaterialSnapshot(materialIndex, before, true);
+        CreateGpuResourcesForCurrentScene();
+        diagnostics = ex.what();
+        return false;
+    }
+    diagnostics = "Material preset applied.";
+    return true;
+}
+
 bool D3D12PathTracingBackend::SaveProjectToDisk(const std::wstring& path)
 {
     std::ofstream file(std::filesystem::path(path), std::ios::binary);
@@ -959,7 +1567,60 @@ bool D3D12PathTracingBackend::SaveProjectToDisk(const std::wstring& path)
              << ", \"alphaCutoff\": " << material.alphaCutoff
              << ", \"alphaMasked\": " << (material.alphaMasked ? "true" : "false")
              << ", \"packedORM\": " << (material.packedOcclusionRoughnessMetallic ? "true" : "false")
+             << ", \"variant\": \"\""
+             << ", \"textures\": {";
+        for (UINT slot = 0; slot < TextureSlotCount; ++slot)
+        {
+            if (slot > 0)
+            {
+                file << ", ";
+            }
+            file << "\"" << TextureSlotKeys[slot] << "\": \"" << cld::EscapeJson(WideToUtf8(material.textures[slot])) << "\"";
+        }
+        file << "}, \"textureOverridesEnabled\": {";
+        for (UINT slot = 0; slot < TextureSlotCount; ++slot)
+        {
+            if (slot > 0)
+            {
+                file << ", ";
+            }
+            const bool enabled = i < m_textureOverrideEnabled.size() && m_textureOverrideEnabled[i][slot];
+            file << "\"" << TextureSlotKeys[slot] << "\": " << (enabled ? "true" : "false");
+        }
+        file << "}"
              << "}" << (i + 1 < m_scene.materials.size() ? "," : "") << "\n";
+    }
+    file << "  ],\n";
+    file << "  \"materialVariants\": [\n";
+    for (size_t i = 0; i < m_materialVariants.size(); ++i)
+    {
+        const MaterialVariant& variant = m_materialVariants[i];
+        const MaterialSnapshot& snapshot = variant.snapshot;
+        file << "    {\"name\": \"" << cld::EscapeJson(variant.name) << "\""
+             << ", \"materialIndex\": " << variant.materialIndex
+             << ", \"materialName\": \"" << cld::EscapeJson(WideToUtf8(variant.materialName)) << "\""
+             << ", \"baseColor\": [" << snapshot.baseColorFactor.x << ", " << snapshot.baseColorFactor.y << ", " << snapshot.baseColorFactor.z << ", " << snapshot.baseColorFactor.w << "]"
+             << ", \"emissive\": [" << snapshot.emissiveFactor.x << ", " << snapshot.emissiveFactor.y << ", " << snapshot.emissiveFactor.z << ", " << snapshot.emissiveFactor.w << "]"
+             << ", \"roughness\": " << snapshot.roughnessFactor
+             << ", \"metallic\": " << snapshot.metallicFactor
+             << ", \"occlusionStrength\": " << snapshot.occlusionStrength
+             << ", \"normalStrength\": " << snapshot.normalStrength
+             << ", \"alphaCutoff\": " << snapshot.alphaCutoff
+             << ", \"alphaMasked\": " << (snapshot.alphaMasked ? "true" : "false")
+             << ", \"packedORM\": " << (snapshot.packedOcclusionRoughnessMetallic ? "true" : "false")
+             << ", \"textures\": {";
+        for (UINT slot = 0; slot < TextureSlotCount; ++slot)
+        {
+            if (slot > 0) file << ", ";
+            file << "\"" << TextureSlotKeys[slot] << "\": \"" << cld::EscapeJson(WideToUtf8(snapshot.textures[slot])) << "\"";
+        }
+        file << "}, \"textureOverridesEnabled\": {";
+        for (UINT slot = 0; slot < TextureSlotCount; ++slot)
+        {
+            if (slot > 0) file << ", ";
+            file << "\"" << TextureSlotKeys[slot] << "\": " << (snapshot.textureOverrideEnabled[slot] ? "true" : "false");
+        }
+        file << "}}" << (i + 1 < m_materialVariants.size() ? "," : "") << "\n";
     }
     file << "  ],\n";
     file << "  \"pathTracing\": {\"samplesPerFrame\": " << m_giSamplesPerFrame << ", \"maxBounces\": " << m_maxPathBounces << ", \"minBounces\": " << m_minPathBounces
@@ -992,7 +1653,11 @@ bool D3D12PathTracingBackend::SaveProjectToDisk(const std::wstring& path)
          << ", \"normalSigma\": " << m_denoiserNormalSigma << ", \"depthSigma\": " << m_denoiserDepthSigma
          << ", \"luminanceSigma\": " << m_denoiserLuminanceSigma << ", \"albedoSigma\": " << m_denoiserAlbedoSigma
          << ", \"strength\": " << m_denoiserStrength << "},\n";
-    file << "  \"view\": {\"debugView\": " << m_debugViewMode << ", \"environmentEnabled\": " << (m_environmentMapEnabled ? "true" : "false") << "}\n";
+    file << "  \"view\": {\"debugView\": " << m_debugViewMode << ", \"environmentEnabled\": " << (m_environmentMapEnabled ? "true" : "false")
+         << ", \"exposure\": " << m_exposure << ", \"gamma\": " << m_gamma
+         << ", \"toneMapper\": \"" << ToneMapperName(m_toneMapper) << "\""
+         << ", \"materialFocusMode\": \"" << MaterialFocusModeName(m_materialFocusMode) << "\""
+         << ", \"selectedMaterial\": " << m_selectedMaterial << "}\n";
     file << "}\n";
     m_projectPath = path;
     m_projectDirty = false;
@@ -1081,7 +1746,77 @@ bool D3D12PathTracingBackend::LoadProjectFromDisk(const std::wstring& path, std:
                 material.alphaCutoff = std::clamp(static_cast<float>(cld::JsonNumberOr(overrideValue, "alphaCutoff", material.alphaCutoff)), 0.0f, 1.0f);
                 material.alphaMasked = cld::JsonBoolOr(overrideValue, "alphaMasked", material.alphaMasked);
                 material.packedOcclusionRoughnessMetallic = cld::JsonBoolOr(overrideValue, "packedORM", material.packedOcclusionRoughnessMetallic);
+                if (const cld::JsonValue* textures = cld::FindMember(overrideValue, "textures"); textures && textures->type == cld::JsonValue::Type::Object)
+                {
+                    const cld::JsonValue* enabled = cld::FindMember(overrideValue, "textureOverridesEnabled");
+                    for (UINT slot = 0; slot < TextureSlotCount; ++slot)
+                    {
+                        const bool overrideEnabled = enabled && enabled->type == cld::JsonValue::Type::Object
+                            ? cld::JsonBoolOr(*enabled, TextureSlotKeys[slot], false)
+                            : false;
+                        if (!overrideEnabled)
+                        {
+                            continue;
+                        }
+                        const std::string texturePathUtf8 = cld::JsonStringOr(*textures, TextureSlotKeys[slot]);
+                        const std::wstring texturePath = Utf8ToWide(texturePathUtf8);
+                        std::string textureDiagnostics;
+                        if (ValidateMaterialTexturePath(texturePath, textureDiagnostics))
+                        {
+                            material.textures[slot] = texturePath;
+                            if (static_cast<size_t>(materialIndex) < m_textureOverrideEnabled.size())
+                            {
+                                m_textureOverrideEnabled[materialIndex][slot] = true;
+                            }
+                        }
+                    }
+                }
                 materialOverridesChanged = true;
+            }
+        }
+
+        m_materialVariants.clear();
+        if (const cld::JsonValue* variants = cld::FindMember(root, "materialVariants"); variants && variants->type == cld::JsonValue::Type::Array)
+        {
+            for (const cld::JsonValue& variantValue : variants->array)
+            {
+                if (variantValue.type != cld::JsonValue::Type::Object)
+                {
+                    continue;
+                }
+                MaterialVariant variant;
+                variant.name = cld::JsonStringOr(variantValue, "name", "Variant");
+                variant.materialIndex = std::clamp(static_cast<int>(cld::JsonNumberOr(variantValue, "materialIndex", 0.0)), 0, (std::max)(0, static_cast<int>(m_scene.materials.size()) - 1));
+                variant.materialName = Utf8ToWide(cld::JsonStringOr(variantValue, "materialName"));
+                if (variant.materialName.empty() && static_cast<size_t>(variant.materialIndex) < m_scene.materials.size())
+                {
+                    variant.materialName = m_scene.materials[variant.materialIndex].name;
+                }
+                variant.snapshot = CaptureMaterialSnapshot(variant.materialIndex);
+                const std::array<float, 4> baseColor = cld::JsonFloat4Or(variantValue, "baseColor", Float4ToArray(variant.snapshot.baseColorFactor));
+                const std::array<float, 4> emissive = cld::JsonFloat4Or(variantValue, "emissive", Float4ToArray(variant.snapshot.emissiveFactor));
+                variant.snapshot.baseColorFactor = XMFLOAT4(baseColor[0], baseColor[1], baseColor[2], baseColor[3]);
+                variant.snapshot.emissiveFactor = XMFLOAT4(emissive[0], emissive[1], emissive[2], emissive[3]);
+                variant.snapshot.roughnessFactor = std::clamp(static_cast<float>(cld::JsonNumberOr(variantValue, "roughness", variant.snapshot.roughnessFactor)), 0.02f, 1.0f);
+                variant.snapshot.metallicFactor = std::clamp(static_cast<float>(cld::JsonNumberOr(variantValue, "metallic", variant.snapshot.metallicFactor)), 0.0f, 1.0f);
+                variant.snapshot.occlusionStrength = std::clamp(static_cast<float>(cld::JsonNumberOr(variantValue, "occlusionStrength", variant.snapshot.occlusionStrength)), 0.0f, 2.0f);
+                variant.snapshot.normalStrength = std::clamp(static_cast<float>(cld::JsonNumberOr(variantValue, "normalStrength", variant.snapshot.normalStrength)), 0.0f, 2.0f);
+                variant.snapshot.alphaCutoff = std::clamp(static_cast<float>(cld::JsonNumberOr(variantValue, "alphaCutoff", variant.snapshot.alphaCutoff)), 0.0f, 1.0f);
+                variant.snapshot.alphaMasked = cld::JsonBoolOr(variantValue, "alphaMasked", variant.snapshot.alphaMasked);
+                variant.snapshot.packedOcclusionRoughnessMetallic = cld::JsonBoolOr(variantValue, "packedORM", variant.snapshot.packedOcclusionRoughnessMetallic);
+                if (const cld::JsonValue* textures = cld::FindMember(variantValue, "textures"); textures && textures->type == cld::JsonValue::Type::Object)
+                {
+                    const cld::JsonValue* enabled = cld::FindMember(variantValue, "textureOverridesEnabled");
+                    for (UINT slot = 0; slot < TextureSlotCount; ++slot)
+                    {
+                        variant.snapshot.textureOverrideEnabled[slot] = enabled && enabled->type == cld::JsonValue::Type::Object
+                            ? cld::JsonBoolOr(*enabled, TextureSlotKeys[slot], false)
+                            : false;
+                        const std::string texturePathUtf8 = cld::JsonStringOr(*textures, TextureSlotKeys[slot]);
+                        variant.snapshot.textures[slot] = Utf8ToWide(texturePathUtf8);
+                    }
+                }
+                m_materialVariants.push_back(std::move(variant));
             }
         }
 
@@ -1176,6 +1911,19 @@ bool D3D12PathTracingBackend::LoadProjectFromDisk(const std::wstring& path, std:
         {
             m_debugViewMode = std::clamp(static_cast<int>(cld::JsonNumberOr(*view, "debugView", m_debugViewMode)), 0, 40);
             m_environmentMapEnabled = cld::JsonBoolOr(*view, "environmentEnabled", m_environmentMapEnabled);
+            m_exposure = std::clamp(static_cast<float>(cld::JsonNumberOr(*view, "exposure", m_exposure)), -12.0f, 12.0f);
+            m_gamma = std::clamp(static_cast<float>(cld::JsonNumberOr(*view, "gamma", m_gamma)), 0.8f, 4.0f);
+            ToneMapper toneMapper = m_toneMapper;
+            if (TryParseToneMapper(cld::JsonStringOr(*view, "toneMapper"), toneMapper))
+            {
+                m_toneMapper = toneMapper;
+            }
+            MaterialFocusMode focusMode = m_materialFocusMode;
+            if (TryParseMaterialFocusMode(cld::JsonStringOr(*view, "materialFocusMode"), focusMode))
+            {
+                m_materialFocusMode = focusMode;
+            }
+            m_selectedMaterial = std::clamp(static_cast<int>(cld::JsonNumberOr(*view, "selectedMaterial", m_selectedMaterial)), 0, (std::max)(0, static_cast<int>(m_scene.materials.size()) - 1));
         }
 
         if (modeChanged || materialOverridesChanged)
@@ -1264,20 +2012,7 @@ bool D3D12PathTracingBackend::ApplyAction(const std::string& method, const cld::
     }
     if (method == "set_material")
     {
-        int materialIndex = static_cast<int>(cld::JsonNumberOr(params, "index", -1.0));
-        const std::string materialNameUtf8 = cld::JsonStringOr(params, "name");
-        if (materialIndex < 0 && !materialNameUtf8.empty())
-        {
-            const std::wstring materialName = Utf8ToWide(materialNameUtf8);
-            for (size_t i = 0; i < m_scene.materials.size(); ++i)
-            {
-                if (m_scene.materials[i].name == materialName)
-                {
-                    materialIndex = static_cast<int>(i);
-                    break;
-                }
-            }
-        }
+        const int materialIndex = ResolveMaterialIndex(params);
         if (materialIndex < 0 || static_cast<size_t>(materialIndex) >= m_scene.materials.size())
         {
             diagnostics = "Material index or name was not found.";
@@ -1292,28 +2027,303 @@ bool D3D12PathTracingBackend::ApplyAction(const std::string& method, const cld::
         const float occlusion = std::clamp(static_cast<float>(cld::JsonNumberOr(params, "occlusionStrength", current.occlusionStrength)), 0.0f, 2.0f);
         const float normal = std::clamp(static_cast<float>(cld::JsonNumberOr(params, "normalStrength", current.normalStrength)), 0.0f, 2.0f);
         const float alphaCutoff = std::clamp(static_cast<float>(cld::JsonNumberOr(params, "alphaCutoff", current.alphaCutoff)), 0.0f, 1.0f);
-        if (!std::isfinite(roughness) || !std::isfinite(metallic) || !std::isfinite(occlusion) || !std::isfinite(normal) || !std::isfinite(alphaCutoff))
+        if (!AllFinite({ baseColor[0], baseColor[1], baseColor[2], baseColor[3], emissive[0], emissive[1], emissive[2], emissive[3],
+            roughness, metallic, occlusion, normal, alphaCutoff }))
         {
             diagnostics = "Material contains non-finite values.";
             return false;
         }
 
+        MaterialSnapshot next = CaptureMaterialSnapshot(materialIndex);
+        if (cld::JsonBoolOr(params, "resetToSource", false))
+        {
+            next = {};
+            if (static_cast<size_t>(materialIndex) < m_sourceMaterials.size())
+            {
+                const Bistro::Material& source = m_sourceMaterials[materialIndex];
+                next.baseColorFactor = source.baseColorFactor;
+                next.emissiveFactor = source.emissiveFactor;
+                next.roughnessFactor = source.roughnessFactor;
+                next.metallicFactor = source.metallicFactor;
+                next.occlusionStrength = source.occlusionStrength;
+                next.normalStrength = source.normalStrength;
+                next.alphaCutoff = source.alphaCutoff;
+                next.alphaMasked = source.alphaMasked;
+                next.packedOcclusionRoughnessMetallic = source.packedOcclusionRoughnessMetallic;
+                next.textures = source.textures;
+                next.textureOverrideEnabled.fill(false);
+            }
+        }
+        if (cld::FindMember(params, "baseColor")) next.baseColorFactor = XMFLOAT4(baseColor[0], baseColor[1], baseColor[2], baseColor[3]);
+        if (cld::FindMember(params, "emissive")) next.emissiveFactor = XMFLOAT4(emissive[0], emissive[1], emissive[2], emissive[3]);
+        if (cld::FindMember(params, "roughness")) next.roughnessFactor = roughness;
+        if (cld::FindMember(params, "metallic")) next.metallicFactor = metallic;
+        if (cld::FindMember(params, "occlusionStrength")) next.occlusionStrength = occlusion;
+        if (cld::FindMember(params, "normalStrength")) next.normalStrength = normal;
+        if (cld::FindMember(params, "alphaCutoff")) next.alphaCutoff = alphaCutoff;
+        if (cld::FindMember(params, "alphaMasked")) next.alphaMasked = cld::JsonBoolOr(params, "alphaMasked", next.alphaMasked);
+        if (cld::FindMember(params, "packedORM")) next.packedOcclusionRoughnessMetallic = cld::JsonBoolOr(params, "packedORM", next.packedOcclusionRoughnessMetallic);
+
+        if (const cld::JsonValue* textures = cld::FindMember(params, "textures"); textures && textures->type == cld::JsonValue::Type::Object)
+        {
+            for (UINT slot = 0; slot < TextureSlotCount; ++slot)
+            {
+                const std::string texturePathUtf8 = cld::JsonStringOr(*textures, TextureSlotKeys[slot]);
+                if (texturePathUtf8.empty())
+                {
+                    continue;
+                }
+                const std::wstring texturePath = Utf8ToWide(texturePathUtf8);
+                if (!ValidateMaterialTexturePath(texturePath, diagnostics))
+                {
+                    return false;
+                }
+                next.textures[slot] = texturePath;
+                next.textureOverrideEnabled[slot] = true;
+            }
+        }
+        if (const cld::JsonValue* clearTextures = cld::FindMember(params, "clearTextures"); clearTextures && clearTextures->type == cld::JsonValue::Type::Array)
+        {
+            for (const cld::JsonValue& slotValue : clearTextures->array)
+            {
+                UINT slot = 0;
+                if (!TryParseTextureSlot(slotValue, slot))
+                {
+                    diagnostics = "clearTextures contains an invalid texture slot.";
+                    return false;
+                }
+                next.textures[slot].clear();
+                next.textureOverrideEnabled[slot] = true;
+            }
+        }
+
         if (!validateOnly)
         {
-            Bistro::Material& material = m_scene.materials[materialIndex];
-            material.baseColorFactor = XMFLOAT4(baseColor[0], baseColor[1], baseColor[2], baseColor[3]);
-            material.emissiveFactor = XMFLOAT4(emissive[0], emissive[1], emissive[2], emissive[3]);
-            material.roughnessFactor = roughness;
-            material.metallicFactor = metallic;
-            material.occlusionStrength = occlusion;
-            material.normalStrength = normal;
-            material.alphaCutoff = alphaCutoff;
-            material.alphaMasked = cld::JsonBoolOr(params, "alphaMasked", material.alphaMasked);
-            material.packedOcclusionRoughnessMetallic = cld::JsonBoolOr(params, "packedORM", material.packedOcclusionRoughnessMetallic);
-            CreateGpuResourcesForCurrentScene();
+            const MaterialSnapshot before = CaptureMaterialSnapshot(materialIndex);
+            ApplyMaterialSnapshot(materialIndex, next, true);
+            try
+            {
+                CreateGpuResourcesForCurrentScene();
+            }
+            catch (const std::exception& ex)
+            {
+                ApplyMaterialSnapshot(materialIndex, before, true);
+                CreateGpuResourcesForCurrentScene();
+                diagnostics = ex.what();
+                return false;
+            }
             m_projectDirty = true;
         }
         diagnostics = "Material settings accepted.";
+        return true;
+    }
+    if (method == "set_material_texture")
+    {
+        const int materialIndex = ResolveMaterialIndex(params);
+        UINT slot = 0;
+        const cld::JsonValue* slotValue = cld::FindMember(params, "slot");
+        if (materialIndex < 0 || !slotValue || !TryParseTextureSlot(*slotValue, slot))
+        {
+            diagnostics = "set_material_texture requires a valid material and slot.";
+            return false;
+        }
+        const bool resetToSource = cld::JsonBoolOr(params, "resetToSource", false);
+        const bool clearTexture = cld::JsonBoolOr(params, "clear", false);
+        const std::wstring texturePath = clearTexture || resetToSource ? std::wstring() : Utf8ToWide(cld::JsonStringOr(params, "path"));
+        if (!resetToSource && !clearTexture && texturePath.empty())
+        {
+            diagnostics = "set_material_texture requires path, clear, or resetToSource.";
+            return false;
+        }
+        if (!resetToSource && !clearTexture && !ValidateMaterialTexturePath(texturePath, diagnostics))
+        {
+            return false;
+        }
+        if (!validateOnly)
+        {
+            const MaterialSnapshot before = CaptureMaterialSnapshot(materialIndex);
+            if (resetToSource)
+            {
+                ApplyMaterialTextureOverride(materialIndex, slot, {}, false, diagnostics);
+            }
+            else
+            {
+                ApplyMaterialTextureOverride(materialIndex, slot, texturePath, true, diagnostics);
+            }
+            try
+            {
+                CreateGpuResourcesForCurrentScene();
+            }
+            catch (const std::exception& ex)
+            {
+                ApplyMaterialSnapshot(materialIndex, before, true);
+                CreateGpuResourcesForCurrentScene();
+                diagnostics = ex.what();
+                return false;
+            }
+            m_projectDirty = true;
+        }
+        diagnostics = "Material texture settings accepted.";
+        return true;
+    }
+    if (method == "reset_material")
+    {
+        const int materialIndex = ResolveMaterialIndex(params);
+        if (materialIndex < 0)
+        {
+            diagnostics = "Material index or name was not found.";
+            return false;
+        }
+        if (!validateOnly)
+        {
+            ResetMaterialToSource(materialIndex);
+            CreateGpuResourcesForCurrentScene();
+            m_projectDirty = true;
+        }
+        diagnostics = "Material reset accepted.";
+        return true;
+    }
+    if (method == "save_material_variant")
+    {
+        const int materialIndex = ResolveMaterialIndex(params);
+        const std::string variantName = cld::JsonStringOr(params, "variant", cld::JsonStringOr(params, "variantName", "Variant"));
+        if (materialIndex < 0 || variantName.empty())
+        {
+            diagnostics = "save_material_variant requires a valid material and variant name.";
+            return false;
+        }
+        if (!validateOnly)
+        {
+            auto it = std::find_if(m_materialVariants.begin(), m_materialVariants.end(), [&](const MaterialVariant& variant)
+            {
+                return variant.materialIndex == materialIndex && variant.name == variantName;
+            });
+            MaterialVariant variant;
+            variant.name = variantName;
+            variant.materialIndex = materialIndex;
+            variant.materialName = m_scene.materials[materialIndex].name;
+            variant.snapshot = CaptureMaterialSnapshot(materialIndex);
+            if (it == m_materialVariants.end())
+            {
+                m_materialVariants.push_back(std::move(variant));
+            }
+            else
+            {
+                *it = std::move(variant);
+            }
+            m_projectDirty = true;
+        }
+        diagnostics = "Material variant saved.";
+        return true;
+    }
+    if (method == "apply_material_variant" || method == "delete_material_variant")
+    {
+        const int materialIndex = ResolveMaterialIndex(params);
+        const int variantIndex = static_cast<int>(cld::JsonNumberOr(params, "variantIndex", -1.0));
+        const std::string variantName = cld::JsonStringOr(params, "variant", cld::JsonStringOr(params, "variantName"));
+        auto it = m_materialVariants.end();
+        if (variantIndex >= 0 && static_cast<size_t>(variantIndex) < m_materialVariants.size())
+        {
+            it = m_materialVariants.begin() + variantIndex;
+        }
+        else if (!variantName.empty())
+        {
+            it = std::find_if(m_materialVariants.begin(), m_materialVariants.end(), [&](const MaterialVariant& variant)
+            {
+                return variant.name == variantName && (materialIndex < 0 || variant.materialIndex == materialIndex || variant.materialName == Utf8ToWide(cld::JsonStringOr(params, "name")));
+            });
+        }
+        if (it == m_materialVariants.end())
+        {
+            diagnostics = "Material variant was not found.";
+            return false;
+        }
+        if (method == "delete_material_variant")
+        {
+            if (!validateOnly)
+            {
+                m_materialVariants.erase(it);
+                m_projectDirty = true;
+            }
+            diagnostics = "Material variant deleted.";
+            return true;
+        }
+
+        int applyIndex = materialIndex >= 0 ? materialIndex : it->materialIndex;
+        if (applyIndex < 0 || static_cast<size_t>(applyIndex) >= m_scene.materials.size())
+        {
+            diagnostics = "Material variant target was not found.";
+            return false;
+        }
+        if (!validateOnly)
+        {
+            const MaterialSnapshot before = CaptureMaterialSnapshot(applyIndex);
+            ApplyMaterialSnapshot(applyIndex, it->snapshot, true);
+            try
+            {
+                CreateGpuResourcesForCurrentScene();
+            }
+            catch (const std::exception& ex)
+            {
+                ApplyMaterialSnapshot(applyIndex, before, true);
+                CreateGpuResourcesForCurrentScene();
+                diagnostics = ex.what();
+                return false;
+            }
+            m_projectDirty = true;
+        }
+        diagnostics = "Material variant applied.";
+        return true;
+    }
+    if (method == "set_material_view")
+    {
+        const int selected = std::clamp(static_cast<int>(cld::JsonNumberOr(params, "selectedMaterial", m_selectedMaterial)), 0, (std::max)(0, static_cast<int>(m_scene.materials.size()) - 1));
+        MaterialFocusMode focusMode = m_materialFocusMode;
+        if (const cld::JsonValue* focus = cld::FindMember(params, "focusMode"))
+        {
+            if (focus->type != cld::JsonValue::Type::String || !TryParseMaterialFocusMode(focus->string, focusMode))
+            {
+                diagnostics = "Material focus mode is invalid.";
+                return false;
+            }
+        }
+        if (!validateOnly)
+        {
+            m_selectedMaterial = selected;
+            m_materialFocusMode = focusMode;
+            ResetAccumulation();
+            m_projectDirty = true;
+        }
+        diagnostics = "Material view settings accepted.";
+        return true;
+    }
+    if (method == "set_color_management")
+    {
+        ToneMapper toneMapper = m_toneMapper;
+        if (const cld::JsonValue* toneMapperValue = cld::FindMember(params, "toneMapper"))
+        {
+            if (toneMapperValue->type != cld::JsonValue::Type::String || !TryParseToneMapper(toneMapperValue->string, toneMapper))
+            {
+                diagnostics = "Tone mapper is invalid.";
+                return false;
+            }
+        }
+        const float exposure = std::clamp(static_cast<float>(cld::JsonNumberOr(params, "exposure", m_exposure)), -12.0f, 12.0f);
+        const float gamma = std::clamp(static_cast<float>(cld::JsonNumberOr(params, "gamma", m_gamma)), 0.8f, 4.0f);
+        if (!AllFinite({ exposure, gamma }))
+        {
+            diagnostics = "Color management settings contain non-finite values.";
+            return false;
+        }
+        if (!validateOnly)
+        {
+            m_toneMapper = toneMapper;
+            m_exposure = exposure;
+            m_gamma = gamma;
+            ResetAccumulation();
+            m_projectDirty = true;
+        }
+        diagnostics = "Color management settings accepted.";
         return true;
     }
     if (method == "set_lighting")
@@ -1594,39 +2604,26 @@ mcp::ToolResult D3D12PathTracingBackend::CallMcpTool(const std::string& name, co
         std::lock_guard<std::mutex> lock(m_mcpSnapshotMutex);
         return MakeMcpJsonToolResult(true, "Material list returned.", m_mcpMaterialsJson);
     }
+    if (name == "lookdevpt.list_debug_views")
+    {
+        return MakeMcpJsonToolResult(true, "Debug view list returned.", BuildDebugViewsJson());
+    }
+    if (name == "lookdevpt.list_render_modes")
+    {
+        return MakeMcpJsonToolResult(true, "Render mode list returned.", BuildRenderModesJson());
+    }
+    if (name == "lookdevpt.get_diagnostics")
+    {
+        std::lock_guard<std::mutex> lock(m_mcpSnapshotMutex);
+        return MakeMcpJsonToolResult(true, "Diagnostics returned.", m_mcpDiagnosticsJson);
+    }
     if (name == "lookdevpt.capture_viewport")
     {
-        mcp::CommandRequest request;
-        request.toolName = name;
-        request.actionMethod = "__capture_viewport";
-        request.params = arguments;
-        request.validateOnly = false;
-        request.mutation = false;
-        request.summary = "Capture current viewport PNG.";
-        request.deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
-
-        mcp::SubmitResult submitted = m_mcpDispatcher.Submit(std::move(request), false);
-        if (!submitted.accepted)
-        {
-            return MakeMcpJsonToolResult(false, submitted.diagnostics, "{\"ok\":false,\"diagnostics\":\"" + cld::EscapeJson(submitted.diagnostics) + "\"}");
-        }
-        if (submitted.future.wait_for(std::chrono::milliseconds(timeoutMs)) != std::future_status::ready)
-        {
-            m_mcpDispatcher.Cancel(submitted.id, "MCP capture timed out.");
-            return MakeMcpJsonToolResult(false, "MCP capture timed out.", "{\"ok\":false,\"diagnostics\":\"MCP capture timed out.\"}");
-        }
-        const mcp::CommandResult result = submitted.future.get();
-        mcp::ToolResult tool;
-        tool.ok = result.ok;
-        tool.isError = !result.ok;
-        tool.text = result.diagnostics;
-        tool.structuredJson = result.structuredJson;
-        if (result.ok)
-        {
-            std::lock_guard<std::mutex> lock(m_mcpSnapshotMutex);
-            tool.contentJson = "[{\"type\":\"text\",\"text\":\"" + cld::EscapeJson(result.diagnostics) + "\"},{\"type\":\"image\",\"data\":\"" + m_mcpLatestCaptureBase64 + "\",\"mimeType\":\"image/png\"},{\"type\":\"resource_link\",\"uri\":\"lookdevpt://captures/latest.png\",\"name\":\"latest_capture\",\"mimeType\":\"image/png\"}]";
-        }
-        return tool;
+        return SubmitMcpCommandTool(name, "__capture_viewport", arguments, false, timeoutMs);
+    }
+    if (name == "lookdevpt.capture_debug_pack")
+    {
+        return SubmitMcpCommandTool(name, "__capture_debug_pack", arguments, true, timeoutMs);
     }
     if (name == "lookdevpt.validate_action")
     {
@@ -1638,6 +2635,51 @@ mcp::ToolResult D3D12PathTracingBackend::CallMcpTool(const std::string& name, co
         }
         return SubmitMcpActionTool(name, method, *params, true, timeoutMs);
     }
+    if (name == "lookdevpt.run_actions")
+    {
+        const bool validateOnly = cld::JsonBoolOr(arguments, "validateOnly", false);
+        return SubmitMcpCommandTool(name, "__run_actions", arguments, !validateOnly, timeoutMs);
+    }
+    if (name == "lookdevpt.reset_accumulation")
+    {
+        return SubmitMcpCommandTool(name, "__reset_accumulation", arguments, true, timeoutMs);
+    }
+    if (name == "lookdevpt.reset_denoise_history")
+    {
+        return SubmitMcpCommandTool(name, "__reset_denoise_history", arguments, true, timeoutMs);
+    }
+    if (name == "lookdevpt.reset_reservoirs")
+    {
+        return SubmitMcpCommandTool(name, "__reset_reservoirs", arguments, true, timeoutMs);
+    }
+    if (name == "lookdevpt.reset_camera_view")
+    {
+        return SubmitMcpCommandTool(name, "__reset_camera_view", arguments, true, timeoutMs);
+    }
+    if (name == "lookdevpt.set_camera_speed")
+    {
+        return SubmitMcpCommandTool(name, "__set_camera_speed", arguments, true, timeoutMs);
+    }
+    if (name == "lookdevpt.fit_camera_to_scene")
+    {
+        return SubmitMcpCommandTool(name, "__fit_camera_to_scene", arguments, true, timeoutMs);
+    }
+    if (name == "lookdevpt.set_display_resolution")
+    {
+        return SubmitMcpCommandTool(name, "__set_display_resolution", arguments, true, timeoutMs);
+    }
+    if (name == "lookdevpt.load_project")
+    {
+        return SubmitMcpCommandTool(name, "__load_project", arguments, true, timeoutMs);
+    }
+    if (name == "lookdevpt.save_project")
+    {
+        return SubmitMcpCommandTool(name, "__save_project", arguments, true, timeoutMs);
+    }
+    if (name == "lookdevpt.save_project_as")
+    {
+        return SubmitMcpCommandTool(name, "__save_project_as", arguments, true, timeoutMs);
+    }
 
     constexpr const char* prefix = "lookdevpt.";
     if (name.rfind(prefix, 0) == 0)
@@ -1645,7 +2687,9 @@ mcp::ToolResult D3D12PathTracingBackend::CallMcpTool(const std::string& name, co
         const std::string actionMethod = name.substr(std::char_traits<char>::length(prefix));
         if (actionMethod == "set_scene" || actionMethod == "set_camera" || actionMethod == "set_material" ||
             actionMethod == "set_lighting" || actionMethod == "set_path_tracing" || actionMethod == "set_restir" ||
-            actionMethod == "set_denoise" || actionMethod == "set_view")
+            actionMethod == "set_denoise" || actionMethod == "set_view" || actionMethod == "set_material_texture" ||
+            actionMethod == "reset_material" || actionMethod == "save_material_variant" || actionMethod == "apply_material_variant" ||
+            actionMethod == "delete_material_variant" || actionMethod == "set_material_view" || actionMethod == "set_color_management")
         {
             return SubmitMcpActionTool(name, actionMethod, arguments, false, timeoutMs);
         }
@@ -1665,6 +2709,43 @@ mcp::ResourceResult D3D12PathTracingBackend::ReadMcpResource(const std::string& 
         result.text = mcp::BuildActionsSchemaJson();
         return result;
     }
+    if (uri == "lookdevpt://debug-views")
+    {
+        result.ok = true;
+        result.mimeType = "application/json";
+        result.text = BuildDebugViewsJson();
+        return result;
+    }
+    if (uri == "lookdevpt://render-modes")
+    {
+        result.ok = true;
+        result.mimeType = "application/json";
+        result.text = BuildRenderModesJson();
+        return result;
+    }
+    constexpr const char* capturePrefix = "lookdevpt://captures/";
+    if (uri.rfind(capturePrefix, 0) == 0 && uri != "lookdevpt://captures/latest.png" && uri != "lookdevpt://captures/index")
+    {
+        const std::string suffix = uri.substr(std::char_traits<char>::length(capturePrefix));
+        if (suffix.size() > 4 && suffix.compare(suffix.size() - 4, 4, ".png") == 0)
+        {
+            const std::string idText = suffix.substr(0, suffix.size() - 4);
+            char* end = nullptr;
+            const unsigned long long id = std::strtoull(idText.c_str(), &end, 10);
+            if (end && *end == '\0' && id > 0)
+            {
+                std::string label;
+                if (FindMcpCapture(static_cast<uint64_t>(id), result.blob, label))
+                {
+                    result.ok = true;
+                    result.mimeType = "image/png";
+                    return result;
+                }
+            }
+        }
+        result.error = "Capture id was not found.";
+        return result;
+    }
 
     std::lock_guard<std::mutex> lock(m_mcpSnapshotMutex);
     if (uri == "lookdevpt://state")
@@ -1681,11 +2762,99 @@ mcp::ResourceResult D3D12PathTracingBackend::ReadMcpResource(const std::string& 
         result.text = m_mcpStatsJson;
         return result;
     }
+    if (uri == "lookdevpt://diagnostics")
+    {
+        result.ok = true;
+        result.mimeType = "application/json";
+        result.text = m_mcpDiagnosticsJson;
+        return result;
+    }
     if (uri == "lookdevpt://materials")
     {
         result.ok = true;
         result.mimeType = "application/json";
         result.text = m_mcpMaterialsJson;
+        return result;
+    }
+    if (uri == "lookdevpt://material-variants")
+    {
+        result.ok = true;
+        result.mimeType = "application/json";
+        result.text = m_mcpMaterialVariantsJson;
+        return result;
+    }
+    if (uri == "lookdevpt://material-presets")
+    {
+        result.ok = true;
+        result.mimeType = "application/json";
+        result.text = m_mcpMaterialPresetsJson;
+        return result;
+    }
+    constexpr const char* materialPrefix = "lookdevpt://materials/";
+    if (uri.rfind(materialPrefix, 0) == 0)
+    {
+        const std::string indexText = uri.substr(std::char_traits<char>::length(materialPrefix));
+        constexpr const char* textureSuffix = "/textures";
+        if (indexText.size() > std::char_traits<char>::length(textureSuffix) &&
+            indexText.compare(indexText.size() - std::char_traits<char>::length(textureSuffix), std::char_traits<char>::length(textureSuffix), textureSuffix) == 0)
+        {
+            const std::string materialIndexText = indexText.substr(0, indexText.size() - std::char_traits<char>::length(textureSuffix));
+            char* textureEnd = nullptr;
+            const unsigned long textureIndex = std::strtoul(materialIndexText.c_str(), &textureEnd, 10);
+            if (textureEnd && *textureEnd == '\0' && textureIndex < m_scene.materials.size())
+            {
+                result.ok = true;
+                result.mimeType = "application/json";
+                result.text = "{\"materialIndex\":" + std::to_string(textureIndex) + ",\"textures\":" + BuildMaterialTexturesJson(textureIndex) + "}";
+                return result;
+            }
+            result.error = "Material texture resource index was not found.";
+            return result;
+        }
+        char* end = nullptr;
+        const unsigned long index = std::strtoul(indexText.c_str(), &end, 10);
+        if (!end || *end != '\0')
+        {
+            result.error = "Material index resource is invalid.";
+            return result;
+        }
+        try
+        {
+            const cld::JsonValue root = cld::JsonParser(m_mcpMaterialsJson).Parse();
+            const cld::JsonValue* materials = cld::FindMember(root, "materials");
+            if (materials && materials->type == cld::JsonValue::Type::Array && index < materials->array.size())
+            {
+                result.ok = true;
+                result.mimeType = "application/json";
+                result.text = cld::JsonValueToJson(materials->array[index]);
+                return result;
+            }
+        }
+        catch (const std::exception&)
+        {
+        }
+        result.error = "Material index was not found.";
+        return result;
+    }
+    if (uri == "lookdevpt://project")
+    {
+        result.ok = true;
+        result.mimeType = "application/json";
+        result.text = m_mcpProjectJson;
+        return result;
+    }
+    if (uri == "lookdevpt://scene/summary")
+    {
+        result.ok = true;
+        result.mimeType = "application/json";
+        result.text = m_mcpSceneSummaryJson;
+        return result;
+    }
+    if (uri == "lookdevpt://captures/index")
+    {
+        result.ok = true;
+        result.mimeType = "application/json";
+        result.text = BuildMcpCaptureIndexJson();
         return result;
     }
     if (uri == "lookdevpt://captures/latest.png")
@@ -1816,53 +2985,422 @@ void D3D12PathTracingBackend::StopMcpServer()
     }
 }
 
+mcp::CommandResult D3D12PathTracingBackend::ExecuteMcpCommand(const mcp::CommandRequest& request)
+{
+    mcp::CommandResult result;
+    auto finish = [&](bool ok, const std::string& diagnostics, const std::string& structuredJson)
+    {
+        UpdateMcpSnapshots();
+        result.ok = ok;
+        result.diagnostics = diagnostics;
+        result.structuredJson = structuredJson.empty() ? ("{\"ok\":" + std::string(ok ? "true" : "false") + ",\"diagnostics\":\"" + cld::EscapeJson(diagnostics) + "\"}") : structuredJson;
+        return result;
+    };
+
+    try
+    {
+        if (request.actionMethod == "__capture_viewport")
+        {
+            std::string base64Png;
+            std::string diagnostics;
+            const bool ok = CaptureViewportPng(base64Png, diagnostics);
+            if (!ok)
+            {
+                return finish(false, diagnostics, "{\"ok\":false,\"diagnostics\":\"" + cld::EscapeJson(diagnostics) + "\"}");
+            }
+
+            uint64_t captureId = 0;
+            {
+                captureId = StoreMcpCapture(base64Png, m_debugViewMode, DebugViewLabels[std::clamp(m_debugViewMode, 0, static_cast<int>(_countof(DebugViewLabels)) - 1)]);
+                std::lock_guard<std::mutex> lock(m_mcpSnapshotMutex);
+                m_mcpLatestCaptureBase64 = std::move(base64Png);
+                m_mcpLastCaptureDiagnostics = diagnostics;
+            }
+            std::ostringstream json;
+            json << "{\"ok\":true,\"diagnostics\":\"" << cld::EscapeJson(diagnostics) << "\",\"captureId\":" << captureId
+                 << ",\"resource\":\"lookdevpt://captures/latest.png\",\"idResource\":\"lookdevpt://captures/" << captureId
+                 << ".png\",\"mimeType\":\"image/png\"}";
+            mcp::CommandResult captureResult = finish(true, diagnostics, json.str());
+            {
+                std::lock_guard<std::mutex> lock(m_mcpSnapshotMutex);
+                captureResult.contentJson = "[{\"type\":\"text\",\"text\":\"" + cld::EscapeJson(diagnostics) +
+                    "\"},{\"type\":\"image\",\"data\":\"" + m_mcpLatestCaptureBase64 +
+                    "\",\"mimeType\":\"image/png\"},{\"type\":\"resource_link\",\"uri\":\"lookdevpt://captures/latest.png\",\"name\":\"latest_capture\",\"mimeType\":\"image/png\"},{\"type\":\"resource_link\",\"uri\":\"lookdevpt://captures/" +
+                    std::to_string(captureId) + ".png\",\"name\":\"capture_" + std::to_string(captureId) + "\",\"mimeType\":\"image/png\"}]";
+            }
+            return captureResult;
+        }
+
+        if (request.actionMethod == "__reset_accumulation")
+        {
+            ResetAccumulation();
+            return finish(true, "Accumulation reset.", "{\"ok\":true,\"diagnostics\":\"Accumulation reset.\",\"stats\":" + BuildMcpStatsJson() + "}");
+        }
+        if (request.actionMethod == "__reset_denoise_history")
+        {
+            ResetDenoiseHistory();
+            return finish(true, "Denoise history reset.", "{\"ok\":true,\"diagnostics\":\"Denoise history reset.\",\"stats\":" + BuildMcpStatsJson() + "}");
+        }
+        if (request.actionMethod == "__reset_reservoirs")
+        {
+            ResetRenderingHistory();
+            return finish(true, "Reservoirs and rendering history reset.", "{\"ok\":true,\"diagnostics\":\"Reservoirs and rendering history reset.\",\"stats\":" + BuildMcpStatsJson() + "}");
+        }
+        if (request.actionMethod == "__reset_camera_view")
+        {
+            ResetCameraView();
+            ResetRenderingHistory();
+            m_projectDirty = true;
+            return finish(true, "Camera view reset.", "{\"ok\":true,\"diagnostics\":\"Camera view reset.\",\"state\":" + BuildMcpStateJson() + "}");
+        }
+        if (request.actionMethod == "__set_camera_speed")
+        {
+            const float baseSpeed = static_cast<float>(cld::JsonNumberOr(request.params, "baseMoveSpeed", m_baseMoveSpeed));
+            const float fastSpeed = static_cast<float>(cld::JsonNumberOr(request.params, "fastMoveSpeed", m_fastMoveSpeed));
+            if (!AllFinite({ baseSpeed, fastSpeed }))
+            {
+                return finish(false, "Camera speed contains non-finite values.", "{\"ok\":false,\"diagnostics\":\"Camera speed contains non-finite values.\"}");
+            }
+            m_baseMoveSpeed = std::clamp(baseSpeed, 0.1f, 100.0f);
+            m_fastMoveSpeed = std::clamp(fastSpeed, m_baseMoveSpeed, 200.0f);
+            m_camera.SetMoveSpeeds(m_baseMoveSpeed, m_fastMoveSpeed);
+            std::ostringstream json;
+            json << "{\"ok\":true,\"diagnostics\":\"Camera speed accepted.\",\"baseMoveSpeed\":" << m_baseMoveSpeed
+                 << ",\"fastMoveSpeed\":" << m_fastMoveSpeed << "}";
+            return finish(true, "Camera speed accepted.", json.str());
+        }
+        if (request.actionMethod == "__fit_camera_to_scene")
+        {
+            const float padding = std::clamp(static_cast<float>(cld::JsonNumberOr(request.params, "padding", 1.2)), 1.0f, 4.0f);
+            const bool preserveOrientation = cld::JsonBoolOr(request.params, "preserveOrientation", true);
+            const float yaw = static_cast<float>(cld::JsonNumberOr(request.params, "yaw", preserveOrientation ? m_camera.GetYawRadians() : m_defaultCameraYaw));
+            const float pitch = std::clamp(static_cast<float>(cld::JsonNumberOr(request.params, "pitch", preserveOrientation ? m_camera.GetPitchRadians() : m_defaultCameraPitch)), XMConvertToRadians(-83.0f), XMConvertToRadians(83.0f));
+            if (!AllFinite({ padding, yaw, pitch }))
+            {
+                return finish(false, "Fit camera settings contain non-finite values.", "{\"ok\":false,\"diagnostics\":\"Fit camera settings contain non-finite values.\"}");
+            }
+            const XMFLOAT3 center(
+                (m_scene.boundsMin.x + m_scene.boundsMax.x) * 0.5f,
+                (m_scene.boundsMin.y + m_scene.boundsMax.y) * 0.5f,
+                (m_scene.boundsMin.z + m_scene.boundsMax.z) * 0.5f);
+            const XMVECTOR extents = XMVectorSet(
+                m_scene.boundsMax.x - m_scene.boundsMin.x,
+                m_scene.boundsMax.y - m_scene.boundsMin.y,
+                m_scene.boundsMax.z - m_scene.boundsMin.z,
+                0.0f);
+            const float radius = (std::max)(1.0f, XMVectorGetX(XMVector3Length(extents)) * 0.5f);
+            const float distance = radius / tanf(XMConvertToRadians(30.0f)) * padding;
+            const XMVECTOR forward = XMVector3Normalize(XMVectorSet(sinf(yaw) * cosf(pitch), sinf(pitch), cosf(yaw) * cosf(pitch), 0.0f));
+            XMFLOAT3 position;
+            XMStoreFloat3(&position, XMLoadFloat3(&center) - forward * distance);
+            m_camera.Reset(position, yaw, pitch);
+            ResetRenderingHistory();
+            m_projectDirty = true;
+            std::ostringstream json;
+            json << "{\"ok\":true,\"diagnostics\":\"Camera fit to scene.\",\"camera\":{\"position\":";
+            AppendJsonFloat3(json, position);
+            json << ",\"yaw\":" << yaw << ",\"pitch\":" << pitch << "},\"padding\":" << padding << "}";
+            return finish(true, "Camera fit to scene.", json.str());
+        }
+        if (request.actionMethod == "__set_display_resolution")
+        {
+            int preset = -1;
+            const std::string presetName = cld::JsonStringOr(request.params, "preset");
+            if (presetName == "720p")
+            {
+                preset = 0;
+            }
+            else if (presetName.empty() || presetName == "1080p")
+            {
+                preset = 1;
+            }
+            else if (presetName == "4k" || presetName == "4K")
+            {
+                preset = 2;
+            }
+
+            UINT width = 0;
+            UINT height = 0;
+            if (const cld::JsonValue* widthValue = cld::FindMember(request.params, "width"); widthValue && widthValue->type == cld::JsonValue::Type::Number)
+            {
+                width = static_cast<UINT>(std::clamp(static_cast<int>(widthValue->number), 320, 7680));
+            }
+            if (const cld::JsonValue* heightValue = cld::FindMember(request.params, "height"); heightValue && heightValue->type == cld::JsonValue::Type::Number)
+            {
+                height = static_cast<UINT>(std::clamp(static_cast<int>(heightValue->number), 240, 4320));
+            }
+
+            if (width > 0 && height > 0)
+            {
+                ApplyClientDisplayResolution(Win32Application::GetHwnd(), width, height);
+                if (width == 1280u && height == 720u) m_displayResolutionPreset = 0;
+                else if (width == 1920u && height == 1080u) m_displayResolutionPreset = 1;
+                else if (width == 3840u && height == 2160u) m_displayResolutionPreset = 2;
+            }
+            else if (preset >= 0)
+            {
+                m_displayResolutionPreset = preset;
+                ApplyBistroDisplayResolution(Win32Application::GetHwnd(), preset);
+            }
+            else
+            {
+                return finish(false, "Display resolution requires preset or width/height.", "{\"ok\":false,\"diagnostics\":\"Display resolution requires preset or width/height.\"}");
+            }
+            std::ostringstream json;
+            json << "{\"ok\":true,\"diagnostics\":\"Display resolution requested.\",\"target\":{\"preset\":" << m_displayResolutionPreset
+                 << ",\"width\":" << (width > 0 ? width : (m_displayResolutionPreset == 0 ? 1280u : m_displayResolutionPreset == 2 ? 3840u : 1920u))
+                 << ",\"height\":" << (height > 0 ? height : (m_displayResolutionPreset == 0 ? 720u : m_displayResolutionPreset == 2 ? 2160u : 1080u)) << "}}";
+            return finish(true, "Display resolution requested.", json.str());
+        }
+        if (request.actionMethod == "__load_project")
+        {
+            const std::string pathUtf8 = cld::JsonStringOr(request.params, "path");
+            if (pathUtf8.empty())
+            {
+                return finish(false, "load_project requires path.", "{\"ok\":false,\"diagnostics\":\"load_project requires path.\"}");
+            }
+            const std::wstring path = Utf8ToWide(pathUtf8);
+            if (!std::filesystem::exists(path))
+            {
+                return finish(false, "Project path does not exist.", "{\"ok\":false,\"diagnostics\":\"Project path does not exist.\"}");
+            }
+            std::string diagnostics;
+            const bool ok = LoadProjectFromDisk(path, diagnostics);
+            return finish(ok, diagnostics, "{\"ok\":" + std::string(ok ? "true" : "false") + ",\"diagnostics\":\"" + cld::EscapeJson(diagnostics) + "\",\"projectPath\":\"" + cld::EscapeJson(pathUtf8) + "\"}");
+        }
+        if (request.actionMethod == "__save_project")
+        {
+            if (m_projectPath.empty())
+            {
+                return finish(false, "Current project has no path. Use save_project_as.", "{\"ok\":false,\"diagnostics\":\"Current project has no path. Use save_project_as.\"}");
+            }
+            const bool ok = SaveProjectToDisk(m_projectPath);
+            const std::string diagnostics = ok ? "Project saved." : "Project save failed.";
+            return finish(ok, diagnostics, "{\"ok\":" + std::string(ok ? "true" : "false") + ",\"diagnostics\":\"" + diagnostics + "\",\"projectPath\":\"" + cld::EscapeJson(WideToUtf8(m_projectPath)) + "\"}");
+        }
+        if (request.actionMethod == "__save_project_as")
+        {
+            const std::string pathUtf8 = cld::JsonStringOr(request.params, "path");
+            if (pathUtf8.empty())
+            {
+                return finish(false, "save_project_as requires path.", "{\"ok\":false,\"diagnostics\":\"save_project_as requires path.\"}");
+            }
+            const std::filesystem::path path(Utf8ToWide(pathUtf8));
+            if (!path.parent_path().empty() && !std::filesystem::exists(path.parent_path()))
+            {
+                return finish(false, "Project directory does not exist.", "{\"ok\":false,\"diagnostics\":\"Project directory does not exist.\"}");
+            }
+            const bool ok = SaveProjectToDisk(path.wstring());
+            const std::string diagnostics = ok ? "Project saved." : "Project save failed.";
+            return finish(ok, diagnostics, "{\"ok\":" + std::string(ok ? "true" : "false") + ",\"diagnostics\":\"" + diagnostics + "\",\"projectPath\":\"" + cld::EscapeJson(pathUtf8) + "\"}");
+        }
+        if (request.actionMethod == "__run_actions")
+        {
+            const cld::JsonValue* actions = cld::FindMember(request.params, "actions");
+            const bool validateOnly = cld::JsonBoolOr(request.params, "validateOnly", false);
+            const bool stopOnError = cld::JsonBoolOr(request.params, "stopOnError", true);
+            if (!actions || actions->type != cld::JsonValue::Type::Array || actions->array.empty() || actions->array.size() > 16)
+            {
+                return finish(false, "run_actions requires 1 to 16 actions.", "{\"ok\":false,\"diagnostics\":\"run_actions requires 1 to 16 actions.\"}");
+            }
+
+            std::vector<std::string> methods;
+            std::vector<const cld::JsonValue*> params;
+            std::vector<std::string> diagnostics;
+            methods.reserve(actions->array.size());
+            params.reserve(actions->array.size());
+            diagnostics.reserve(actions->array.size());
+
+            for (size_t i = 0; i < actions->array.size(); ++i)
+            {
+                const cld::JsonValue& action = actions->array[i];
+                if (action.type != cld::JsonValue::Type::Object)
+                {
+                    return finish(false, "run_actions action must be an object.", "{\"ok\":false,\"diagnostics\":\"run_actions action must be an object.\",\"failedIndex\":" + std::to_string(i) + "}");
+                }
+                const std::string method = cld::JsonStringOr(action, "method");
+                const cld::JsonValue* actionParams = cld::FindMember(action, "params");
+                if (method.empty() || !actionParams || actionParams->type != cld::JsonValue::Type::Object)
+                {
+                    return finish(false, "run_actions action requires method and object params.", "{\"ok\":false,\"diagnostics\":\"run_actions action requires method and object params.\",\"failedIndex\":" + std::to_string(i) + "}");
+                }
+                std::string validationDiagnostics;
+                if (!ApplyAction(method, *actionParams, validationDiagnostics, true))
+                {
+                    std::ostringstream json;
+                    json << "{\"ok\":false,\"diagnostics\":\"Validation failed.\",\"failedIndex\":" << i
+                         << ",\"method\":\"" << cld::EscapeJson(method) << "\",\"actionDiagnostics\":\"" << cld::EscapeJson(validationDiagnostics)
+                         << "\",\"appliedCount\":0}";
+                    return finish(false, "Validation failed.", json.str());
+                }
+                methods.push_back(method);
+                params.push_back(actionParams);
+                diagnostics.push_back(validationDiagnostics);
+            }
+
+            if (validateOnly)
+            {
+                std::ostringstream json;
+                json << "{\"ok\":true,\"diagnostics\":\"All actions validated.\",\"validateOnly\":true,\"actions\":[";
+                for (size_t i = 0; i < methods.size(); ++i)
+                {
+                    if (i > 0) json << ",";
+                    json << "{\"method\":\"" << cld::EscapeJson(methods[i]) << "\",\"diagnostics\":\"" << cld::EscapeJson(diagnostics[i]) << "\"}";
+                }
+                json << "]}";
+                return finish(true, "All actions validated.", json.str());
+            }
+
+            size_t appliedCount = 0;
+            bool hadExecutionFailure = false;
+            size_t firstFailedIndex = 0;
+            std::string firstFailureMethod;
+            std::string firstFailureDiagnostics;
+            for (size_t i = 0; i < methods.size(); ++i)
+            {
+                std::string actionDiagnostics;
+                if (!ApplyAction(methods[i], *params[i], actionDiagnostics, false))
+                {
+                    if (!hadExecutionFailure)
+                    {
+                        hadExecutionFailure = true;
+                        firstFailedIndex = i;
+                        firstFailureMethod = methods[i];
+                        firstFailureDiagnostics = actionDiagnostics;
+                    }
+                    std::ostringstream json;
+                    json << "{\"ok\":false,\"diagnostics\":\"Action execution failed.\",\"failedIndex\":" << i
+                         << ",\"method\":\"" << cld::EscapeJson(methods[i]) << "\",\"actionDiagnostics\":\"" << cld::EscapeJson(actionDiagnostics)
+                         << "\",\"appliedCount\":" << appliedCount << "}";
+                    if (stopOnError)
+                    {
+                        return finish(false, "Action execution failed.", json.str());
+                    }
+                }
+                else
+                {
+                    ++appliedCount;
+                }
+            }
+            if (hadExecutionFailure)
+            {
+                std::ostringstream json;
+                json << "{\"ok\":false,\"diagnostics\":\"Action execution failed.\",\"failedIndex\":" << firstFailedIndex
+                     << ",\"method\":\"" << cld::EscapeJson(firstFailureMethod) << "\",\"actionDiagnostics\":\"" << cld::EscapeJson(firstFailureDiagnostics)
+                     << "\",\"appliedCount\":" << appliedCount << "}";
+                return finish(false, "Action execution failed.", json.str());
+            }
+            std::ostringstream json;
+            json << "{\"ok\":true,\"diagnostics\":\"Actions applied.\",\"validateOnly\":false,\"appliedCount\":" << appliedCount
+                 << ",\"stats\":" << BuildMcpStatsJson() << "}";
+            return finish(true, "Actions applied.", json.str());
+        }
+        if (request.actionMethod == "__capture_debug_pack")
+        {
+            std::vector<int> views;
+            if (const cld::JsonValue* viewArray = cld::FindMember(request.params, "views"); viewArray && viewArray->type == cld::JsonValue::Type::Array)
+            {
+                if (viewArray->array.size() > 8)
+                {
+                    return finish(false, "capture_debug_pack supports at most 8 views.", "{\"ok\":false,\"diagnostics\":\"capture_debug_pack supports at most 8 views.\"}");
+                }
+                for (const cld::JsonValue& viewValue : viewArray->array)
+                {
+                    int debugView = 0;
+                    if (!TryParseDebugView(viewValue, debugView))
+                    {
+                        return finish(false, "capture_debug_pack contains an unknown debug view.", "{\"ok\":false,\"diagnostics\":\"capture_debug_pack contains an unknown debug view.\"}");
+                    }
+                    views.push_back(debugView);
+                }
+            }
+            if (views.empty())
+            {
+                views = { 0, 1, 2, 4, 5, 32, 33, 40 };
+            }
+            const bool restoreView = cld::JsonBoolOr(request.params, "restoreView", true);
+            const int originalView = m_debugViewMode;
+            std::vector<uint64_t> ids;
+            std::string diagnostics = "Debug pack captured.";
+            for (int view : views)
+            {
+                m_debugViewMode = view;
+                ResetAccumulation();
+                std::string renderDiagnostics;
+                if (!RenderPathTracingOutputForCapture(renderDiagnostics))
+                {
+                    if (restoreView)
+                    {
+                        m_debugViewMode = originalView;
+                        ResetAccumulation();
+                    }
+                    return finish(false, renderDiagnostics, "{\"ok\":false,\"diagnostics\":\"" + cld::EscapeJson(renderDiagnostics) + "\"}");
+                }
+                std::string base64Png;
+                std::string captureDiagnostics;
+                if (!CaptureViewportPng(base64Png, captureDiagnostics))
+                {
+                    if (restoreView)
+                    {
+                        m_debugViewMode = originalView;
+                        ResetAccumulation();
+                    }
+                    return finish(false, captureDiagnostics, "{\"ok\":false,\"diagnostics\":\"" + cld::EscapeJson(captureDiagnostics) + "\"}");
+                }
+                const uint64_t id = StoreMcpCapture(base64Png, view, DebugViewLabels[view]);
+                {
+                    std::lock_guard<std::mutex> lock(m_mcpSnapshotMutex);
+                    m_mcpLatestCaptureBase64 = std::move(base64Png);
+                    m_mcpLastCaptureDiagnostics = captureDiagnostics;
+                }
+                ids.push_back(id);
+            }
+            if (restoreView)
+            {
+                m_debugViewMode = originalView;
+                ResetAccumulation();
+            }
+            std::ostringstream json;
+            json << "{\"ok\":true,\"diagnostics\":\"" << diagnostics << "\",\"captures\":[";
+            std::ostringstream content;
+            content << "[{\"type\":\"text\",\"text\":\"" << cld::EscapeJson(diagnostics) << "\"}";
+            for (size_t i = 0; i < ids.size(); ++i)
+            {
+                if (i > 0) json << ",";
+                const int view = views[i];
+                json << "{\"id\":" << ids[i] << ",\"debugView\":" << view << ",\"label\":\"" << DebugViewLabels[view]
+                     << "\",\"resource\":\"lookdevpt://captures/" << ids[i] << ".png\"}";
+                content << ",{\"type\":\"resource_link\",\"uri\":\"lookdevpt://captures/" << ids[i]
+                    << ".png\",\"name\":\"" << cld::EscapeJson(KeyFromLabel(DebugViewLabels[view]))
+                    << "\",\"mimeType\":\"image/png\"}";
+            }
+            json << "],\"restoredDebugView\":" << m_debugViewMode << "}";
+            content << "]";
+            mcp::CommandResult packResult = finish(true, diagnostics, json.str());
+            packResult.contentJson = content.str();
+            return packResult;
+        }
+
+        std::string diagnostics;
+        const bool ok = ApplyAction(request.actionMethod, request.params, diagnostics, request.validateOnly);
+        std::string structured = "{\"ok\":" + std::string(ok ? "true" : "false") +
+            ",\"action\":\"" + cld::EscapeJson(request.actionMethod) +
+            "\",\"validateOnly\":" + std::string(request.validateOnly ? "true" : "false") +
+            ",\"diagnostics\":\"" + cld::EscapeJson(diagnostics) +
+            "\",\"stats\":" + BuildMcpStatsJson() + "}";
+        return finish(ok, diagnostics, structured);
+    }
+    catch (const std::exception& ex)
+    {
+        return finish(false, ex.what(), "{\"ok\":false,\"diagnostics\":\"" + cld::EscapeJson(ex.what()) + "\"}");
+    }
+}
+
 void D3D12PathTracingBackend::ProcessMcpCommands()
 {
     m_mcpDispatcher.ProcessOne([this](const mcp::CommandRequest& request)
     {
-        mcp::CommandResult result;
-        try
-        {
-            if (request.actionMethod == "__capture_viewport")
-            {
-                std::string base64Png;
-                std::string diagnostics;
-                result.ok = CaptureViewportPng(base64Png, diagnostics);
-                result.diagnostics = diagnostics;
-                if (result.ok)
-                {
-                    {
-                        std::lock_guard<std::mutex> lock(m_mcpSnapshotMutex);
-                        m_mcpLatestCaptureBase64 = std::move(base64Png);
-                        m_mcpLastCaptureDiagnostics = diagnostics;
-                    }
-                    result.structuredJson = "{\"ok\":true,\"diagnostics\":\"" + cld::EscapeJson(diagnostics) + "\",\"resource\":\"lookdevpt://captures/latest.png\",\"mimeType\":\"image/png\"}";
-                }
-                else
-                {
-                    result.structuredJson = "{\"ok\":false,\"diagnostics\":\"" + cld::EscapeJson(diagnostics) + "\"}";
-                }
-                return result;
-            }
-
-            std::string diagnostics;
-            const bool ok = ApplyAction(request.actionMethod, request.params, diagnostics, request.validateOnly);
-            UpdateMcpSnapshots();
-            result.ok = ok;
-            result.diagnostics = diagnostics;
-            result.structuredJson = "{\"ok\":" + std::string(ok ? "true" : "false") +
-                ",\"action\":\"" + cld::EscapeJson(request.actionMethod) +
-                "\",\"validateOnly\":" + std::string(request.validateOnly ? "true" : "false") +
-                ",\"diagnostics\":\"" + cld::EscapeJson(diagnostics) +
-                "\",\"stats\":" + BuildMcpStatsJson() + "}";
-        }
-        catch (const std::exception& ex)
-        {
-            result.ok = false;
-            result.diagnostics = ex.what();
-            result.structuredJson = "{\"ok\":false,\"diagnostics\":\"" + cld::EscapeJson(result.diagnostics) + "\"}";
-        }
-        return result;
+        return ExecuteMcpCommand(request);
     });
 }
 
@@ -1871,10 +3409,20 @@ void D3D12PathTracingBackend::UpdateMcpSnapshots()
     const std::string stateJson = BuildMcpStateJson();
     const std::string statsJson = BuildMcpStatsJson();
     const std::string materialsJson = BuildMcpMaterialsJson();
+    const std::string diagnosticsJson = BuildMcpDiagnosticsJson();
+    const std::string projectJson = BuildMcpProjectJson();
+    const std::string sceneSummaryJson = BuildMcpSceneSummaryJson();
+    const std::string variantsJson = BuildMaterialVariantsJson();
+    const std::string presetsJson = BuildMaterialPresetsJson();
     std::lock_guard<std::mutex> lock(m_mcpSnapshotMutex);
     m_mcpStateJson = stateJson;
     m_mcpStatsJson = statsJson;
     m_mcpMaterialsJson = materialsJson;
+    m_mcpDiagnosticsJson = diagnosticsJson;
+    m_mcpProjectJson = projectJson;
+    m_mcpSceneSummaryJson = sceneSummaryJson;
+    m_mcpMaterialVariantsJson = variantsJson;
+    m_mcpMaterialPresetsJson = presetsJson;
 }
 
 std::string D3D12PathTracingBackend::BuildMcpStateJson() const
@@ -1888,7 +3436,8 @@ std::string D3D12PathTracingBackend::BuildMcpStateJson() const
     out << "\"projectDirty\":" << (m_projectDirty ? "true" : "false") << ",";
     out << "\"camera\":{\"position\":";
     AppendJsonFloat3(out, camera);
-    out << ",\"yaw\":" << m_camera.GetYawRadians() << ",\"pitch\":" << m_camera.GetPitchRadians() << "},";
+    out << ",\"yaw\":" << m_camera.GetYawRadians() << ",\"pitch\":" << m_camera.GetPitchRadians()
+        << ",\"baseMoveSpeed\":" << m_baseMoveSpeed << ",\"fastMoveSpeed\":" << m_fastMoveSpeed << "},";
     out << "\"lighting\":{\"direction\":";
     AppendJsonFloat3(out, m_lightDirection);
     out << ",\"color\":";
@@ -1930,7 +3479,13 @@ std::string D3D12PathTracingBackend::BuildMcpStateJson() const
         << ",\"historyClampSigma\":" << m_historyClampSigma << ",\"reactiveThreshold\":" << m_reactiveThreshold
         << ",\"spatialIterations\":" << m_denoiserSpatialIterations << ",\"atrousPasses\":" << m_atrousPassCount
         << ",\"strength\":" << m_denoiserStrength << "},";
-    out << "\"view\":{\"debugView\":" << m_debugViewMode << ",\"normalMapYFlip\":" << (m_debugNormalMapYFlip ? "true" : "false") << "}";
+    const int debugViewIndex = std::clamp(m_debugViewMode, 0, static_cast<int>(_countof(DebugViewLabels)) - 1);
+    out << "\"view\":{\"debugView\":" << m_debugViewMode << ",\"debugViewLabel\":\"" << DebugViewLabels[debugViewIndex]
+        << "\",\"normalMapYFlip\":" << (m_debugNormalMapYFlip ? "true" : "false")
+        << ",\"exposure\":" << m_exposure << ",\"gamma\":" << m_gamma
+        << ",\"toneMapper\":\"" << ToneMapperName(m_toneMapper)
+        << "\",\"materialFocusMode\":\"" << MaterialFocusModeName(m_materialFocusMode)
+        << "\",\"selectedMaterial\":" << m_selectedMaterial << "}";
     out << "}";
     return out.str();
 }
@@ -1994,10 +3549,252 @@ std::string D3D12PathTracingBackend::BuildMcpMaterialsJson() const
         out << ",\"roughness\":" << material.roughnessFactor << ",\"metallic\":" << material.metallicFactor;
         out << ",\"occlusionStrength\":" << material.occlusionStrength << ",\"normalStrength\":" << material.normalStrength;
         out << ",\"alphaCutoff\":" << material.alphaCutoff << ",\"alphaMasked\":" << (material.alphaMasked ? "true" : "false");
-        out << ",\"packedORM\":" << (material.packedOcclusionRoughnessMetallic ? "true" : "false") << "}";
+        out << ",\"packedORM\":" << (material.packedOcclusionRoughnessMetallic ? "true" : "false");
+        if (i < m_materialUsage.size())
+        {
+            out << ",\"meshCount\":" << m_materialUsage[i].meshCount << ",\"triangleCount\":" << m_materialUsage[i].triangleCount;
+        }
+        out << ",\"hasEmissive\":" << ((material.emissiveFactor.x > 0.0f || material.emissiveFactor.y > 0.0f || material.emissiveFactor.z > 0.0f || material.emissiveFactor.w > 0.0f) ? "true" : "false");
+        out << ",\"hasAlpha\":" << (material.alphaMasked || material.baseColorFactor.w < 0.99f ? "true" : "false");
+        out << ",\"textures\":";
+        out << BuildMaterialTexturesJson(i);
+        out << "}";
     }
     out << "]}";
     return out.str();
+}
+
+std::string D3D12PathTracingBackend::BuildMaterialTexturesJson(size_t materialIndex) const
+{
+    std::ostringstream out;
+    out << "[";
+    if (materialIndex < m_scene.materials.size())
+    {
+        const Bistro::Material& material = m_scene.materials[materialIndex];
+        for (UINT slot = 0; slot < TextureSlotCount; ++slot)
+        {
+            if (slot > 0)
+            {
+                out << ",";
+            }
+            const bool overrideEnabled = materialIndex < m_textureOverrideEnabled.size() && m_textureOverrideEnabled[materialIndex][slot];
+            const std::wstring sourcePath = materialIndex < m_sourceMaterials.size() ? m_sourceMaterials[materialIndex].textures[slot] : std::wstring();
+            out << "{\"slot\":" << slot << ",\"key\":\"" << TextureSlotKeys[slot] << "\",\"label\":\"" << TextureSlotLabels[slot] << "\"";
+            out << ",\"sourcePath\":\"" << cld::EscapeJson(WideToUtf8(sourcePath)) << "\"";
+            out << ",\"path\":\"" << cld::EscapeJson(WideToUtf8(material.textures[slot])) << "\"";
+            out << ",\"overrideEnabled\":" << (overrideEnabled ? "true" : "false");
+            out << ",\"exists\":" << (!material.textures[slot].empty() && std::filesystem::exists(material.textures[slot]) ? "true" : "false");
+            if (materialIndex < m_materialTextureIndices.size() && slot < m_materialTextureIndices[materialIndex].size())
+            {
+                const UINT textureIndex = m_materialTextureIndices[materialIndex][slot];
+                if (textureIndex < m_textures.size())
+                {
+                    const GpuTexture& texture = m_textures[textureIndex];
+                    out << ",\"width\":" << texture.width << ",\"height\":" << texture.height
+                        << ",\"mipLevels\":" << texture.mipLevels << ",\"format\":" << static_cast<int>(texture.format)
+                        << ",\"fallback\":" << (texture.fallback ? "true" : "false");
+                }
+            }
+            out << "}";
+        }
+    }
+    out << "]";
+    return out.str();
+}
+
+std::string D3D12PathTracingBackend::BuildMaterialVariantsJson() const
+{
+    std::ostringstream out;
+    out << "{\"variants\":[";
+    for (size_t i = 0; i < m_materialVariants.size(); ++i)
+    {
+        if (i > 0)
+        {
+            out << ",";
+        }
+        const MaterialVariant& variant = m_materialVariants[i];
+        out << "{\"index\":" << i << ",\"name\":\"" << cld::EscapeJson(variant.name)
+            << "\",\"materialIndex\":" << variant.materialIndex
+            << ",\"materialName\":\"" << cld::EscapeJson(WideToUtf8(variant.materialName)) << "\"}";
+    }
+    out << "]}";
+    return out.str();
+}
+
+std::string D3D12PathTracingBackend::BuildMaterialPresetsJson() const
+{
+    std::ostringstream out;
+    out << "{\"presets\":[";
+    for (size_t i = 0; i < m_materialPresets.size(); ++i)
+    {
+        if (i > 0)
+        {
+            out << ",";
+        }
+        const MaterialPreset& preset = m_materialPresets[i];
+        out << "{\"index\":" << i << ",\"name\":\"" << cld::EscapeJson(preset.name)
+            << "\",\"category\":\"" << cld::EscapeJson(preset.category)
+            << "\",\"sourcePath\":\"" << cld::EscapeJson(WideToUtf8(preset.sourcePath)) << "\"}";
+    }
+    out << "]}";
+    return out.str();
+}
+
+std::string D3D12PathTracingBackend::BuildMcpDiagnosticsJson() const
+{
+    const mcp::ServerStatus status = m_mcpServer.GetStatus();
+    std::ostringstream out;
+    out << "{";
+    out << "\"scene\":\"" << cld::EscapeJson(m_sceneDiagnostics) << "\",";
+    out << "\"project\":\"" << cld::EscapeJson(m_projectDiagnostics) << "\",";
+    out << "\"mcp\":\"" << cld::EscapeJson(m_mcpUiDiagnostics) << "\",";
+    out << "\"lastCapture\":\"" << cld::EscapeJson(m_mcpLastCaptureDiagnostics) << "\",";
+    out << "\"server\":{\"running\":" << (status.running ? "true" : "false")
+        << ",\"endpoint\":\"" << cld::EscapeJson(status.endpoint)
+        << "\",\"lastError\":\"" << cld::EscapeJson(status.lastError)
+        << "\",\"activeSessions\":" << status.activeSessions
+        << ",\"activeRequests\":" << status.activeRequests
+        << ",\"pendingCommands\":" << m_mcpDispatcher.PendingCount() << ",\"recentRequests\":[";
+    for (size_t i = 0; i < status.recentRequests.size(); ++i)
+    {
+        if (i > 0)
+        {
+            out << ",";
+        }
+        out << "\"" << cld::EscapeJson(status.recentRequests[i]) << "\"";
+    }
+    out << "]}}";
+    return out.str();
+}
+
+std::string D3D12PathTracingBackend::BuildMcpProjectJson() const
+{
+    std::ostringstream out;
+    out << "{";
+    out << "\"projectPath\":\"" << cld::EscapeJson(WideToUtf8(m_projectPath)) << "\",";
+    out << "\"projectDirty\":" << (m_projectDirty ? "true" : "false") << ",";
+    out << "\"scenePath\":\"" << cld::EscapeJson(WideToUtf8(m_scenePath)) << "\",";
+    out << "\"environmentPath\":\"" << cld::EscapeJson(WideToUtf8(m_environmentTexturePath)) << "\"";
+    out << "}";
+    return out.str();
+}
+
+std::string D3D12PathTracingBackend::BuildMcpSceneSummaryJson() const
+{
+    uint64_t primitiveCount = 0;
+    uint64_t submittedIndexCount = 0;
+    for (const Bistro::DrawItem& draw : m_scene.draws)
+    {
+        submittedIndexCount += draw.indexCount;
+        primitiveCount += draw.indexCount / 3;
+    }
+
+    std::ostringstream out;
+    out << "{";
+    out << "\"scenePath\":\"" << cld::EscapeJson(WideToUtf8(m_scenePath)) << "\",";
+    out << "\"environmentPath\":\"" << cld::EscapeJson(WideToUtf8(m_environmentTexturePath)) << "\",";
+    out << "\"meshes\":" << m_scene.draws.size() << ",\"materials\":" << m_scene.materials.size()
+        << ",\"textures\":" << m_textures.size() << ",\"vertices\":" << m_scene.vertices.size()
+        << ",\"indices\":" << m_scene.indices.size() << ",\"submittedIndices\":" << submittedIndexCount
+        << ",\"triangles\":" << primitiveCount << ",\"bounds\":{\"min\":";
+    AppendJsonFloat3(out, m_scene.boundsMin);
+    out << ",\"max\":";
+    AppendJsonFloat3(out, m_scene.boundsMax);
+    out << "},\"lights\":" << m_activeLightCount
+        << ",\"emissiveTriangleLights\":" << m_emissiveTriangleLightCount
+        << ",\"proceduralAreaLights\":" << m_proceduralAreaLightCount << "}";
+    return out.str();
+}
+
+std::string D3D12PathTracingBackend::BuildMcpCaptureIndexJson() const
+{
+    std::ostringstream out;
+    out << "{\"latest\":\"" << (m_mcpLatestCaptureBase64.empty() ? "" : "lookdevpt://captures/latest.png") << "\",\"captures\":[";
+    for (size_t i = 0; i < m_mcpCaptures.size(); ++i)
+    {
+        if (i > 0)
+        {
+            out << ",";
+        }
+        const McpCapture& capture = m_mcpCaptures[i];
+        out << "{\"id\":" << capture.id << ",\"debugView\":" << capture.debugView
+            << ",\"label\":\"" << cld::EscapeJson(capture.label)
+            << "\",\"uri\":\"lookdevpt://captures/" << capture.id << ".png\",\"mimeType\":\"image/png\"}";
+    }
+    out << "]}";
+    return out.str();
+}
+
+uint64_t D3D12PathTracingBackend::StoreMcpCapture(std::string base64Png, int debugView, const std::string& label)
+{
+    std::lock_guard<std::mutex> lock(m_mcpSnapshotMutex);
+    McpCapture capture;
+    capture.id = m_nextMcpCaptureId++;
+    capture.debugView = debugView;
+    capture.label = label;
+    capture.base64Png = std::move(base64Png);
+    m_mcpCaptures.push_back(std::move(capture));
+    while (m_mcpCaptures.size() > 8)
+    {
+        m_mcpCaptures.pop_front();
+    }
+    return m_mcpCaptures.back().id;
+}
+
+bool D3D12PathTracingBackend::FindMcpCapture(uint64_t id, std::string& base64Png, std::string& label) const
+{
+    std::lock_guard<std::mutex> lock(m_mcpSnapshotMutex);
+    for (const McpCapture& capture : m_mcpCaptures)
+    {
+        if (capture.id == id)
+        {
+            base64Png = capture.base64Png;
+            label = capture.label;
+            return true;
+        }
+    }
+    return false;
+}
+
+mcp::ToolResult D3D12PathTracingBackend::SubmitMcpCommandTool(const std::string& toolName, const std::string& actionMethod, const cld::JsonValue& params, bool mutation, int timeoutMs)
+{
+    mcp::ServerSettings settings;
+    {
+        std::lock_guard<std::mutex> lock(m_mcpSettingsMutex);
+        settings = m_mcpSettings;
+    }
+
+    if (mutation && settings.accessMode == mcp::AccessMode::ReadOnly)
+    {
+        return MakeMcpJsonToolResult(false, "MCP mutation rejected because access mode is Read Only.", "{\"ok\":false,\"diagnostics\":\"MCP mutation rejected because access mode is Read Only.\"}");
+    }
+
+    mcp::CommandRequest request;
+    request.toolName = toolName;
+    request.actionMethod = actionMethod;
+    request.params = params;
+    request.validateOnly = !mutation;
+    request.mutation = mutation;
+    request.summary = (mutation ? "Run " : "Read ") + toolName + " " + cld::JsonValueToJson(params);
+    request.deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
+
+    const bool requiresApproval = mutation && settings.accessMode == mcp::AccessMode::ConfirmMutations;
+    mcp::SubmitResult submitted = m_mcpDispatcher.Submit(std::move(request), requiresApproval);
+    if (!submitted.accepted)
+    {
+        return MakeMcpJsonToolResult(false, submitted.diagnostics, "{\"ok\":false,\"diagnostics\":\"" + cld::EscapeJson(submitted.diagnostics) + "\"}");
+    }
+
+    if (submitted.future.wait_for(std::chrono::milliseconds(timeoutMs)) != std::future_status::ready)
+    {
+        m_mcpDispatcher.Cancel(submitted.id, "MCP request timed out.");
+        return MakeMcpJsonToolResult(false, "MCP request timed out.", "{\"ok\":false,\"diagnostics\":\"MCP request timed out.\"}");
+    }
+
+    const mcp::CommandResult result = submitted.future.get();
+    mcp::ToolResult tool = MakeMcpJsonToolResult(result.ok, result.diagnostics, result.structuredJson);
+    tool.contentJson = result.contentJson;
+    return tool;
 }
 
 mcp::ToolResult D3D12PathTracingBackend::SubmitMcpActionTool(const std::string& toolName, const std::string& actionMethod, const cld::JsonValue& params, bool validateOnly, int timeoutMs)
@@ -2142,6 +3939,39 @@ bool D3D12PathTracingBackend::CaptureViewportPng(std::string& base64Png, std::st
         ThrowIfFailed(DirectX::SaveToWICMemory(pngImage, DirectX::WIC_FLAGS_NONE, GUID_ContainerFormatPng, pngBlob));
         base64Png = Base64Encode(pngBlob.GetConstBufferPointer(), pngBlob.GetBufferSize());
         diagnostics = "Viewport captured.";
+        return true;
+    }
+    catch (const std::exception& ex)
+    {
+        diagnostics = ex.what();
+        return false;
+    }
+}
+
+bool D3D12PathTracingBackend::RenderPathTracingOutputForCapture(std::string& diagnostics)
+{
+    if (!m_PathtracingOutput || !m_commandQueue || !m_device || !m_commandAllocator || !m_commandList)
+    {
+        diagnostics = "Path tracing output is not ready.";
+        return false;
+    }
+
+    try
+    {
+        WaitForPreviousFrame();
+        UpdateConstantBuffer(0.0f);
+        ThrowIfFailed(m_commandAllocator->Reset());
+        ThrowIfFailed(m_commandList->Reset(m_commandAllocator.Get(), nullptr));
+        ID3D12DescriptorHeap* descriptorHeaps[] = { m_descriptorHeap.Get() };
+        m_commandList->SetDescriptorHeaps(_countof(descriptorHeaps), descriptorHeaps);
+        DispatchRays();
+        RunRestirReusePass();
+        RunDenoisePass();
+        ThrowIfFailed(m_commandList->Close());
+        ID3D12CommandList* commandLists[] = { m_commandList.Get() };
+        m_commandQueue->ExecuteCommandLists(_countof(commandLists), commandLists);
+        WaitForPreviousFrame();
+        diagnostics = "Path tracing output rendered for capture.";
         return true;
     }
     catch (const std::exception& ex)
@@ -2859,6 +4689,8 @@ void D3D12PathTracingBackend::UpdateConstantBuffer(float)
     constants.signalDenoiseOptions = XMFLOAT4(m_splitSignalDenoise ? 1.0f : 0.0f, m_historyClampSigma, m_reactiveThreshold, m_specularHistoryScale);
     constants.denoisePassOptions = XMFLOAT4(0.0f, static_cast<float>(m_atrousPassCount), 0.0f, 0.0f);
     constants.stabilityOptions = XMFLOAT4(m_temporalStabilityEnabled ? 1.0f : 0.0f, m_cameraMotionAmount, m_currentJitterStrength, temporalHistoryValid ? 1.0f : 0.0f);
+    constants.viewOptions = XMFLOAT4(m_exposure, m_gamma, static_cast<float>(m_toneMapper), 0.0f);
+    constants.materialFocusOptions = XMFLOAT4(static_cast<float>(m_materialFocusMode), static_cast<float>(m_selectedMaterial), 0.0f, 0.0f);
     memcpy(m_mappedSceneConstants, &constants, sizeof(constants));
 
     XMStoreFloat4x4(&m_previousViewProjection, viewProjection);
@@ -3124,19 +4956,6 @@ void D3D12PathTracingBackend::BuildUI()
 
     SubmitMainDockSpace();
 
-    const char* modeItems[] = { "Baseline PT", "ReSTIR GI", "ReSTIR DI", "ReSTIR GI + DI" };
-    const char* debugModes[] =
-    {
-        "Final", "Base Color", "World Normal", "Normal Texture", "Roughness", "Metallic", "Emissive",
-        "Hit Distance", "Direct NEE", "Indirect", "Bounce Count", "Accumulation Samples", "Sky",
-        "Reservoir Weight", "Temporal Reuse", "Spatial Reuse", "Current Radiance", "Temporal Output",
-        "History Length", "Variance", "Motion Vector", "Disocclusion Mask", "Denoised Indirect",
-        "Denoise Delta", "Reservoir Age", "Reservoir Validity", "GI Reservoir Weight",
-        "DI Reservoir Weight", "GI Temporal Reuse", "DI Temporal Reuse", "GI Spatial Reuse",
-        "DI Spatial Reuse", "Direct Signal", "Indirect Signal", "Residual Signal", "Temporal Input",
-        "Temporal Output Detail", "A-Trous Output", "Reactive Mask", "History Match", "History Confidence"
-    };
-
     ImGui::SetNextWindowPos(ImVec2(24.0f, 48.0f), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowSize(ImVec2(460.0f, 340.0f), ImGuiCond_FirstUseEver);
     ImGui::Begin("Viewport");
@@ -3165,20 +4984,36 @@ void D3D12PathTracingBackend::BuildUI()
         m_pendingFileDialog = PendingFileDialog::OpenEnvironment;
     }
     int modeIndex = static_cast<int>(m_mode);
-    if (ImGui::Combo("Render Mode", &modeIndex, modeItems, _countof(modeItems)))
+    if (ImGui::Combo("Render Mode", &modeIndex, RenderModeLabels, _countof(RenderModeLabels)))
     {
         m_mode = static_cast<PathTracingMode>(std::clamp(modeIndex, 0, 3));
         m_pendingGpuResourceRefresh = true;
         m_projectDirty = true;
     }
-    static int displayResolutionPreset = 1;
     const char* displayResolutionItems[] = { "720p (1280 x 720)", "1080p (1920 x 1080)", "4K (3840 x 2160)" };
-    if (ImGui::Combo("Display Resolution", &displayResolutionPreset, displayResolutionItems, static_cast<int>(sizeof(displayResolutionItems) / sizeof(displayResolutionItems[0]))))
+    if (ImGui::Combo("Display Resolution", &m_displayResolutionPreset, displayResolutionItems, static_cast<int>(sizeof(displayResolutionItems) / sizeof(displayResolutionItems[0]))))
     {
-        ApplyBistroDisplayResolution(Win32Application::GetHwnd(), displayResolutionPreset);
+        ApplyBistroDisplayResolution(Win32Application::GetHwnd(), m_displayResolutionPreset);
     }
-    if (ImGui::Combo("Debug View", &m_debugViewMode, debugModes, _countof(debugModes))) ResetAccumulation();
+    if (ImGui::Combo("Debug View", &m_debugViewMode, DebugViewLabels, _countof(DebugViewLabels))) ResetAccumulation();
     if (ImGui::Checkbox("Normal Map Y Flip", &m_debugNormalMapYFlip)) ResetAccumulation();
+    int toneMapperIndex = static_cast<int>(m_toneMapper);
+    if (ImGui::Combo("Tone Mapper", &toneMapperIndex, ToneMapperLabels, _countof(ToneMapperLabels)))
+    {
+        m_toneMapper = static_cast<ToneMapper>(std::clamp(toneMapperIndex, 0, 2));
+        ResetAccumulation();
+        m_projectDirty = true;
+    }
+    if (ImGui::SliderFloat("Exposure", &m_exposure, -6.0f, 6.0f, "%.2f EV"))
+    {
+        ResetAccumulation();
+        m_projectDirty = true;
+    }
+    if (ImGui::SliderFloat("Gamma", &m_gamma, 1.0f, 3.0f, "%.2f"))
+    {
+        ResetAccumulation();
+        m_projectDirty = true;
+    }
     if (ImGui::Button("Reset Accumulation")) ResetAccumulation();
     ImGui::PopItemWidth();
     ImGui::End();
@@ -3223,62 +5058,284 @@ void D3D12PathTracingBackend::BuildUI()
     ImGui::SetNextWindowSize(ImVec2(460.0f, 380.0f), ImGuiCond_FirstUseEver);
     ImGui::Begin("Material");
     ImGui::PushItemWidth(250.0f);
-    static int selectedMaterial = 0;
     if (m_scene.materials.empty())
     {
         ImGui::TextUnformatted("No materials.");
     }
     else
     {
-        selectedMaterial = std::clamp(selectedMaterial, 0, static_cast<int>(m_scene.materials.size()) - 1);
-        std::string currentName = WideToUtf8(m_scene.materials[selectedMaterial].name);
+        m_selectedMaterial = std::clamp(m_selectedMaterial, 0, static_cast<int>(m_scene.materials.size()) - 1);
+        auto matchesSearch = [&](size_t index)
+        {
+            if (m_materialSearch[0] == '\0')
+            {
+                return true;
+            }
+            std::string haystack = WideToUtf8(m_scene.materials[index].name);
+            std::string needle = m_materialSearch;
+            std::transform(haystack.begin(), haystack.end(), haystack.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+            std::transform(needle.begin(), needle.end(), needle.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+            return haystack.find(needle) != std::string::npos || std::to_string(index).find(needle) != std::string::npos;
+        };
+
+        ImGui::InputText("Search", m_materialSearch, _countof(m_materialSearch));
+        std::string currentName = WideToUtf8(m_scene.materials[m_selectedMaterial].name);
         if (currentName.empty())
         {
-            currentName = "Material " + std::to_string(selectedMaterial);
+            currentName = "Material " + std::to_string(m_selectedMaterial);
         }
         if (ImGui::BeginCombo("Material", currentName.c_str()))
         {
             for (size_t i = 0; i < m_scene.materials.size(); ++i)
             {
+                if (!matchesSearch(i))
+                {
+                    continue;
+                }
                 std::string label = WideToUtf8(m_scene.materials[i].name);
                 if (label.empty())
                 {
                     label = "Material " + std::to_string(i);
                 }
                 label += "##material" + std::to_string(i);
-                if (ImGui::Selectable(label.c_str(), selectedMaterial == static_cast<int>(i)))
+                if (ImGui::Selectable(label.c_str(), m_selectedMaterial == static_cast<int>(i)))
                 {
-                    selectedMaterial = static_cast<int>(i);
+                    m_selectedMaterial = static_cast<int>(i);
+                    ResetAccumulation();
                 }
             }
             ImGui::EndCombo();
         }
 
-        Bistro::Material& material = m_scene.materials[selectedMaterial];
-        bool materialChanged = false;
-        float baseColor[] = { material.baseColorFactor.x, material.baseColorFactor.y, material.baseColorFactor.z, material.baseColorFactor.w };
-        float emissive[] = { material.emissiveFactor.x, material.emissiveFactor.y, material.emissiveFactor.z, material.emissiveFactor.w };
-        if (ImGui::ColorEdit4("Base Color", baseColor))
+        Bistro::Material& material = m_scene.materials[m_selectedMaterial];
+        const MaterialUsage usage = static_cast<size_t>(m_selectedMaterial) < m_materialUsage.size() ? m_materialUsage[m_selectedMaterial] : MaterialUsage{};
+        ImGui::Text("Meshes: %u  Triangles: %llu", usage.meshCount, static_cast<unsigned long long>(usage.triangleCount));
+        ImGui::Text("Flags: %s%s%s",
+            material.alphaMasked || material.baseColorFactor.w < 0.99f ? "Alpha " : "",
+            material.emissiveFactor.w > 0.0f && (material.emissiveFactor.x > 0.0f || material.emissiveFactor.y > 0.0f || material.emissiveFactor.z > 0.0f) ? "Emissive " : "",
+            material.packedOcclusionRoughnessMetallic ? "PackedORM" : "");
+
+        if (ImGui::BeginTabBar("MaterialLookDevTabs"))
         {
-            material.baseColorFactor = XMFLOAT4(baseColor[0], baseColor[1], baseColor[2], baseColor[3]);
-            materialChanged = true;
-        }
-        if (ImGui::ColorEdit4("Emissive", emissive))
-        {
-            material.emissiveFactor = XMFLOAT4(emissive[0], emissive[1], emissive[2], emissive[3]);
-            materialChanged = true;
-        }
-        materialChanged |= ImGui::SliderFloat("Roughness", &material.roughnessFactor, 0.02f, 1.0f, "%.2f");
-        materialChanged |= ImGui::SliderFloat("Metallic", &material.metallicFactor, 0.0f, 1.0f, "%.2f");
-        materialChanged |= ImGui::SliderFloat("Occlusion", &material.occlusionStrength, 0.0f, 2.0f, "%.2f");
-        materialChanged |= ImGui::SliderFloat("Normal Strength", &material.normalStrength, 0.0f, 2.0f, "%.2f");
-        materialChanged |= ImGui::Checkbox("Alpha Mask", &material.alphaMasked);
-        materialChanged |= ImGui::SliderFloat("Alpha Cutoff", &material.alphaCutoff, 0.0f, 1.0f, "%.2f");
-        materialChanged |= ImGui::Checkbox("Packed ORM", &material.packedOcclusionRoughnessMetallic);
-        if (materialChanged)
-        {
-            m_pendingGpuResourceRefresh = true;
-            m_projectDirty = true;
+            if (ImGui::BeginTabItem("Properties"))
+            {
+                bool materialChanged = false;
+                float baseColor[] = { material.baseColorFactor.x, material.baseColorFactor.y, material.baseColorFactor.z, material.baseColorFactor.w };
+                float emissive[] = { material.emissiveFactor.x, material.emissiveFactor.y, material.emissiveFactor.z, material.emissiveFactor.w };
+                if (ImGui::ColorEdit4("Base Color", baseColor))
+                {
+                    material.baseColorFactor = XMFLOAT4(baseColor[0], baseColor[1], baseColor[2], baseColor[3]);
+                    materialChanged = true;
+                }
+                if (ImGui::ColorEdit4("Emissive", emissive))
+                {
+                    material.emissiveFactor = XMFLOAT4(emissive[0], emissive[1], emissive[2], emissive[3]);
+                    materialChanged = true;
+                }
+                materialChanged |= ImGui::SliderFloat("Roughness", &material.roughnessFactor, 0.02f, 1.0f, "%.2f");
+                materialChanged |= ImGui::SliderFloat("Metallic", &material.metallicFactor, 0.0f, 1.0f, "%.2f");
+                materialChanged |= ImGui::SliderFloat("Occlusion", &material.occlusionStrength, 0.0f, 2.0f, "%.2f");
+                materialChanged |= ImGui::SliderFloat("Normal Strength", &material.normalStrength, 0.0f, 2.0f, "%.2f");
+                materialChanged |= ImGui::Checkbox("Alpha Mask", &material.alphaMasked);
+                materialChanged |= ImGui::SliderFloat("Alpha Cutoff", &material.alphaCutoff, 0.0f, 1.0f, "%.2f");
+                materialChanged |= ImGui::Checkbox("Packed ORM", &material.packedOcclusionRoughnessMetallic);
+                const int previousFocus = static_cast<int>(m_materialFocusMode);
+                int focusMode = previousFocus;
+                if (ImGui::Combo("Material Focus", &focusMode, MaterialFocusLabels, _countof(MaterialFocusLabels)))
+                {
+                    m_materialFocusMode = static_cast<MaterialFocusMode>(std::clamp(focusMode, 0, 2));
+                    ResetAccumulation();
+                    m_projectDirty = true;
+                }
+                if (ImGui::Button("Reset To Source"))
+                {
+                    ResetMaterialToSource(m_selectedMaterial);
+                    m_pendingGpuResourceRefresh = true;
+                    m_projectDirty = true;
+                }
+                if (materialChanged)
+                {
+                    m_pendingGpuResourceRefresh = true;
+                    m_projectDirty = true;
+                }
+                ImGui::EndTabItem();
+            }
+            if (ImGui::BeginTabItem("Textures"))
+            {
+                for (UINT slot = 0; slot < TextureSlotCount; ++slot)
+                {
+                    ImGui::PushID(static_cast<int>(slot));
+                    const bool overrideEnabled = static_cast<size_t>(m_selectedMaterial) < m_textureOverrideEnabled.size() && m_textureOverrideEnabled[m_selectedMaterial][slot];
+                    const std::wstring sourcePath = static_cast<size_t>(m_selectedMaterial) < m_sourceMaterials.size() ? m_sourceMaterials[m_selectedMaterial].textures[slot] : std::wstring();
+                    ImGui::SeparatorText(TextureSlotLabels[slot]);
+                    ImGui::TextWrapped("Source: %s", sourcePath.empty() ? "<fallback>" : WideToUtf8(sourcePath).c_str());
+                    ImGui::TextWrapped("Current: %s", material.textures[slot].empty() ? "<fallback>" : WideToUtf8(material.textures[slot]).c_str());
+                    ImGui::Text("Override: %s  Exists: %s", overrideEnabled ? "yes" : "no", (!material.textures[slot].empty() && std::filesystem::exists(material.textures[slot])) ? "yes" : "no");
+                    if (static_cast<size_t>(m_selectedMaterial) < m_materialTextureIndices.size())
+                    {
+                        const UINT textureIndex = m_materialTextureIndices[m_selectedMaterial][slot];
+                        if (textureIndex < m_textures.size())
+                        {
+                            const GpuTexture& texture = m_textures[textureIndex];
+                            ImGui::Text("GPU: %ux%u  mips %u  format %d%s", texture.width, texture.height, texture.mipLevels, static_cast<int>(texture.format), texture.fallback ? " fallback" : "");
+                        }
+                    }
+                    if (ImGui::Button("Load"))
+                    {
+                        const std::wstring path = OpenPathDialog(L"Texture Images\0*.png;*.jpg;*.jpeg;*.tga;*.dds;*.hdr;*.bmp\0All Files\0*.*\0");
+                        if (!path.empty())
+                        {
+                            const MaterialSnapshot before = CaptureMaterialSnapshot(m_selectedMaterial);
+                            std::string textureDiagnostics;
+                            if (ApplyMaterialTextureOverride(m_selectedMaterial, slot, path, true, textureDiagnostics))
+                            {
+                                try
+                                {
+                                    CreateGpuResourcesForCurrentScene();
+                                    m_projectDirty = true;
+                                }
+                                catch (const std::exception& ex)
+                                {
+                                    ApplyMaterialSnapshot(m_selectedMaterial, before, true);
+                                    CreateGpuResourcesForCurrentScene();
+                                    m_projectDiagnostics = ex.what();
+                                }
+                            }
+                            else
+                            {
+                                m_projectDiagnostics = textureDiagnostics;
+                            }
+                        }
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Clear"))
+                    {
+                        std::string textureDiagnostics;
+                        ApplyMaterialTextureOverride(m_selectedMaterial, slot, {}, true, textureDiagnostics);
+                        m_pendingGpuResourceRefresh = true;
+                        m_projectDirty = true;
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Reset"))
+                    {
+                        std::string textureDiagnostics;
+                        ApplyMaterialTextureOverride(m_selectedMaterial, slot, {}, false, textureDiagnostics);
+                        m_pendingGpuResourceRefresh = true;
+                        m_projectDirty = true;
+                    }
+                    ImGui::PopID();
+                }
+                ImGui::EndTabItem();
+            }
+            if (ImGui::BeginTabItem("Variants"))
+            {
+                ImGui::InputText("Variant Name", m_materialVariantName, _countof(m_materialVariantName));
+                if (ImGui::Button("Save Variant"))
+                {
+                    cld::JsonValue params;
+                    params.type = cld::JsonValue::Type::Object;
+                    cld::JsonValue indexValue; indexValue.type = cld::JsonValue::Type::Number; indexValue.number = m_selectedMaterial;
+                    cld::JsonValue nameValue; nameValue.type = cld::JsonValue::Type::String; nameValue.string = m_materialVariantName;
+                    params.object["index"] = indexValue;
+                    params.object["variant"] = nameValue;
+                    std::string actionDiagnostics;
+                    ApplyAction("save_material_variant", params, actionDiagnostics, false);
+                    m_projectDiagnostics = actionDiagnostics;
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Set A"))
+                {
+                    m_materialCompareA = CaptureMaterialSnapshot(m_selectedMaterial);
+                    m_hasMaterialCompareA = true;
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Set B"))
+                {
+                    m_materialCompareB = CaptureMaterialSnapshot(m_selectedMaterial);
+                    m_hasMaterialCompareB = true;
+                }
+                if (m_hasMaterialCompareA && ImGui::Button("Apply A"))
+                {
+                    ApplyMaterialSnapshot(m_selectedMaterial, m_materialCompareA, true);
+                    m_pendingGpuResourceRefresh = true;
+                    m_projectDirty = true;
+                }
+                ImGui::SameLine();
+                if (m_hasMaterialCompareB && ImGui::Button("Apply B"))
+                {
+                    ApplyMaterialSnapshot(m_selectedMaterial, m_materialCompareB, true);
+                    m_pendingGpuResourceRefresh = true;
+                    m_projectDirty = true;
+                }
+                ImGui::Separator();
+                for (size_t i = 0; i < m_materialVariants.size(); ++i)
+                {
+                    MaterialVariant& variant = m_materialVariants[i];
+                    if (variant.materialIndex != m_selectedMaterial && variant.materialName != material.name)
+                    {
+                        continue;
+                    }
+                    ImGui::PushID(static_cast<int>(i));
+                    ImGui::TextUnformatted(variant.name.c_str());
+                    ImGui::SameLine();
+                    if (ImGui::Button("Apply"))
+                    {
+                        ApplyMaterialSnapshot(m_selectedMaterial, variant.snapshot, true);
+                        m_pendingGpuResourceRefresh = true;
+                        m_projectDirty = true;
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Delete"))
+                    {
+                        m_materialVariants.erase(m_materialVariants.begin() + static_cast<std::ptrdiff_t>(i));
+                        m_projectDirty = true;
+                        ImGui::PopID();
+                        break;
+                    }
+                    ImGui::PopID();
+                }
+                ImGui::EndTabItem();
+            }
+            if (ImGui::BeginTabItem("Presets"))
+            {
+                ImGui::InputText("Preset Name", m_materialPresetName, _countof(m_materialPresetName));
+                if (ImGui::Button("Save User Preset"))
+                {
+                    std::string presetDiagnostics;
+                    if (!SaveUserMaterialPreset(m_materialPresetName, m_selectedMaterial, presetDiagnostics))
+                    {
+                        m_projectDiagnostics = presetDiagnostics;
+                    }
+                    else
+                    {
+                        m_projectDiagnostics = presetDiagnostics;
+                    }
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Reload"))
+                {
+                    LoadMaterialPresets();
+                }
+                ImGui::Separator();
+                for (size_t i = 0; i < m_materialPresets.size(); ++i)
+                {
+                    ImGui::PushID(static_cast<int>(i));
+                    ImGui::Text("%s / %s", m_materialPresets[i].category.c_str(), m_materialPresets[i].name.c_str());
+                    ImGui::SameLine();
+                    if (ImGui::Button("Apply"))
+                    {
+                        std::string presetDiagnostics;
+                        if (ApplyMaterialPreset(m_selectedMaterial, i, presetDiagnostics))
+                        {
+                            m_projectDirty = true;
+                        }
+                        m_projectDiagnostics = presetDiagnostics;
+                    }
+                    ImGui::PopID();
+                }
+                ImGui::EndTabItem();
+            }
+            ImGui::EndTabBar();
         }
     }
     ImGui::PopItemWidth();
@@ -3998,6 +6055,7 @@ bool D3D12PathTracingBackend::HasAccumulationStateChanged()
         m_environmentRotation,
         static_cast<float>(m_activeLightCount));
     XMFLOAT4 signalDenoiseOptions(m_splitSignalDenoise ? 1.0f : 0.0f, m_historyClampSigma, m_reactiveThreshold, m_specularHistoryScale);
+    XMFLOAT4 viewOptions(m_exposure, m_gamma, static_cast<float>(m_toneMapper), static_cast<float>(m_materialFocusMode) + static_cast<float>(m_selectedMaterial) * 4.0f);
     const bool changed =
         m_resetAccumulationRequested ||
         memcmp(&cameraAndYaw, &m_lastCameraAndYaw, sizeof(XMFLOAT4)) != 0 ||
@@ -4007,7 +6065,8 @@ bool D3D12PathTracingBackend::HasAccumulationStateChanged()
         memcmp(&restirOptions, &m_lastRestirOptions, sizeof(XMFLOAT4)) != 0 ||
         memcmp(&restirDiOptions, &m_lastRestirDiOptions, sizeof(XMFLOAT4)) != 0 ||
         memcmp(&lightSystemOptions, &m_lastLightSystemOptions, sizeof(XMFLOAT4)) != 0 ||
-        memcmp(&signalDenoiseOptions, &m_lastSignalDenoiseOptions, sizeof(XMFLOAT4)) != 0;
+        memcmp(&signalDenoiseOptions, &m_lastSignalDenoiseOptions, sizeof(XMFLOAT4)) != 0 ||
+        memcmp(&viewOptions, &m_lastViewOptions, sizeof(XMFLOAT4)) != 0;
     m_lastCameraAndYaw = cameraAndYaw;
     m_lastLighting = lighting;
     m_lastGiOptions = giOptions;
@@ -4016,6 +6075,7 @@ bool D3D12PathTracingBackend::HasAccumulationStateChanged()
     m_lastRestirDiOptions = restirDiOptions;
     m_lastLightSystemOptions = lightSystemOptions;
     m_lastSignalDenoiseOptions = signalDenoiseOptions;
+    m_lastViewOptions = viewOptions;
     m_resetAccumulationRequested = false;
     return changed;
 }

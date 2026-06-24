@@ -103,6 +103,7 @@ private:
     HttpResponse HandleHttpRequest(const HttpRequest& request);
     HttpResponse HandleJsonRpc(const HttpRequest& request, const cld::JsonValue& rpc);
     HttpResponse HandleInitialize(const cld::JsonValue& rpc);
+    HttpResponse HandlePromptGet(const std::string& idJson, const cld::JsonValue& rpc);
     HttpResponse HandleDeleteSession(const HttpRequest& request);
     bool ValidateOrigin(const HttpRequest& request) const;
     bool ValidateAuthorization(const HttpRequest& request) const;
@@ -131,4 +132,7 @@ AccessMode AccessModeFromName(const std::string& name, AccessMode fallback);
 std::string BuildActionsSchemaJson();
 std::string BuildToolsListJson();
 std::string BuildResourcesListJson();
+std::string BuildResourceTemplatesListJson();
+std::string BuildPromptsListJson();
+std::string BuildPromptGetResultJson(const std::string& name, const cld::JsonValue* arguments, bool& found);
 }

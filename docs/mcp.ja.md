@@ -171,18 +171,40 @@ Read tools:
 
 - `lookdevpt.get_stats`: adapter、DXR tier、resolution、scene counts、accumulated samples、active mode、reservoir count、denoiser state、MCP queue state を返します。
 - `lookdevpt.get_state`: scene path、project path、camera、lighting、path tracing、ReSTIR、denoise、view state を返します。
-- `lookdevpt.list_materials`: material 名と編集可能な PBR factor を返します。
+- `lookdevpt.list_materials`: material 名、使用数、編集可能な PBR factor、texture slot 状態を返します。
+- `lookdevpt.list_debug_views`: debug view の id、label、key を返します。
+- `lookdevpt.list_render_modes`: render mode の label と action value を返します。
+- `lookdevpt.get_diagnostics`: scene / project / capture / MCP diagnostics を返します。
 - `lookdevpt.capture_viewport`: 現在の final/debug viewport を PNG として取得し、inline `image/png` と `lookdevpt://captures/latest.png` を返します。
+- `lookdevpt.capture_debug_pack`: 最大 8 個の debug view を PNG capture し、それぞれの resource link を返します。
 
 Validation:
 
 - `lookdevpt.validate_action`: `{ "method": "...", "params": { ... } }` を受け取り、同じ action path を `validateOnly=true` で実行します。
+- `lookdevpt.run_actions`: 複数の action-layer call をまとめて validation / apply します。validation 失敗時は一切 mutation しません。
 
 Mutation tools:
 
+- `lookdevpt.reset_accumulation`
+- `lookdevpt.reset_denoise_history`
+- `lookdevpt.reset_reservoirs`
+- `lookdevpt.reset_camera_view`
+- `lookdevpt.set_camera_speed`
+- `lookdevpt.fit_camera_to_scene`
+- `lookdevpt.set_display_resolution`
+- `lookdevpt.load_project`
+- `lookdevpt.save_project`
+- `lookdevpt.save_project_as`
 - `lookdevpt.set_scene`
 - `lookdevpt.set_camera`
 - `lookdevpt.set_material`
+- `lookdevpt.set_material_texture`
+- `lookdevpt.reset_material`
+- `lookdevpt.save_material_variant`
+- `lookdevpt.apply_material_variant`
+- `lookdevpt.delete_material_variant`
+- `lookdevpt.set_material_view`
+- `lookdevpt.set_color_management`
 - `lookdevpt.set_lighting`
 - `lookdevpt.set_path_tracing`
 - `lookdevpt.set_restir`
@@ -195,9 +217,33 @@ tool result は主に `structuredContent` を使います。互換用に text su
 
 - `lookdevpt://state`: 現在の state JSON。
 - `lookdevpt://stats`: 現在の stats JSON。
+- `lookdevpt://diagnostics`: scene、project、capture、MCP diagnostics。
 - `lookdevpt://materials`: material list JSON。
+- `lookdevpt://materials/{index}`: 1 material の JSON object。
+- `lookdevpt://materials/{index}/textures`: 1 material の source/current/override texture slot。
+- `lookdevpt://material-variants`: 保存済み per-material variant snapshot。
+- `lookdevpt://material-presets`: built-in / user material preset。
+- `lookdevpt://debug-views`: debug view の id、label、key。
+- `lookdevpt://render-modes`: render mode と `set_path_tracing.mode` の value。
+- `lookdevpt://project`: 現在の project path と dirty flag。
+- `lookdevpt://scene/summary`: scene counts、bounds、lights、asset paths。
 - `lookdevpt://actions/schema`: action 名と JSON input schema。
+- `lookdevpt://captures/index`: memory 上の capture history。
 - `lookdevpt://captures/latest.png`: 最新の PNG capture。
+- `lookdevpt://captures/{id}.png`: `capture_viewport` または `capture_debug_pack` の PNG。
+
+Resource templates:
+
+- `lookdevpt://captures/{id}.png`
+- `lookdevpt://materials/{index}`
+- `lookdevpt://materials/{index}/textures`
+
+Prompts:
+
+- `lookdevpt.inspect_scene`: state / stats / materials / diagnostics を読み、scene を要約します。
+- `lookdevpt.tune_denoise`: validation を通して安定した denoise 設定を提案・適用します。
+- `lookdevpt.setup_camera_shot`: scene bounds と state を使って camera shot を作ります。
+- `lookdevpt.capture_debug_review`: debug pack を capture し、見える問題を要約します。
 
 resource read 例:
 
@@ -301,7 +347,7 @@ interactive denoise preset の設定:
 }
 ```
 
-viewport capture:
+material factor の設定:
 
 ```json
 {
@@ -309,8 +355,174 @@ viewport capture:
   "id": 15,
   "method": "tools/call",
   "params": {
+    "name": "lookdevpt.set_material",
+    "arguments": {
+      "index": 0,
+      "baseColor": [0.9, 0.76, 0.54, 1.0],
+      "roughness": 0.42,
+      "metallic": 0.0
+    }
+  }
+}
+```
+
+material texture slot の override / clear:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 16,
+  "method": "tools/call",
+  "params": {
+    "name": "lookdevpt.set_material_texture",
+    "arguments": {
+      "index": 0,
+      "slot": "baseColor",
+      "path": "D:\\LookDevTextures\\paint_basecolor.png"
+    }
+  }
+}
+```
+
+slot override を消す場合は `"clear": true`、import 元の texture に戻す場合は `"resetToSource": true` を使います。
+
+material variant の保存と適用:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 17,
+  "method": "tools/call",
+  "params": {
+    "name": "lookdevpt.save_material_variant",
+    "arguments": {
+      "index": 0,
+      "variant": "warm rough"
+    }
+  }
+}
+```
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 18,
+  "method": "tools/call",
+  "params": {
+    "name": "lookdevpt.apply_material_variant",
+    "arguments": {
+      "index": 0,
+      "variant": "warm rough"
+    }
+  }
+}
+```
+
+material focus と final view transform の設定:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 19,
+  "method": "tools/call",
+  "params": {
+    "name": "lookdevpt.run_actions",
+    "arguments": {
+      "actions": [
+        {
+          "method": "set_material_view",
+          "params": { "selectedMaterial": 0, "focusMode": "dim" }
+        },
+        {
+          "method": "set_color_management",
+          "params": { "toneMapper": "aces", "exposure": 0.0, "gamma": 2.2 }
+        }
+      ],
+      "validateOnly": false,
+      "stopOnError": true
+    }
+  }
+}
+```
+
+viewport capture:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 20,
+  "method": "tools/call",
+  "params": {
     "name": "lookdevpt.capture_viewport",
     "arguments": {}
+  }
+}
+```
+
+validation 付き batch 実行:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 21,
+  "method": "tools/call",
+  "params": {
+    "name": "lookdevpt.run_actions",
+    "arguments": {
+      "actions": [
+        {
+          "method": "set_path_tracing",
+          "params": { "mode": "restir_gi_di", "samplesPerFrame": 2 }
+        },
+        {
+          "method": "set_denoise",
+          "params": { "preset": "interactive_stable", "resetHistory": true }
+        }
+      ],
+      "validateOnly": false,
+      "stopOnError": true
+    }
+  }
+}
+```
+
+debug review pack の capture:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 22,
+  "method": "tools/call",
+  "params": {
+    "name": "lookdevpt.capture_debug_pack",
+    "arguments": {
+      "views": [
+        "Final",
+        "Base Color",
+        "World Normal",
+        "Roughness",
+        "Metallic",
+        "Direct Signal",
+        "Indirect Signal",
+        "History Confidence"
+      ]
+    }
+  }
+}
+```
+
+dialog なしで project 保存:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 23,
+  "method": "tools/call",
+  "params": {
+    "name": "lookdevpt.save_project_as",
+    "arguments": {
+      "path": "D:\\Git\\D3D12LookDevPT\\projects\\bistro.lookdevpt.json"
+    }
   }
 }
 ```

@@ -37,6 +37,8 @@ struct SceneConstants
     float4 signalDenoiseOptions;
     float4 denoisePassOptions;
     float4 stabilityOptions;
+    float4 viewOptions;
+    float4 materialFocusOptions;
 };
 
 struct RestirReservoir
@@ -70,11 +72,30 @@ float Luminance(float3 color)
     return dot(color, float3(0.2126f, 0.7152f, 0.0722f));
 }
 
+float3 AcesTonemap(float3 color)
+{
+    const float a = 2.51f;
+    const float b = 0.03f;
+    const float c = 2.43f;
+    const float d = 0.59f;
+    const float e = 0.14f;
+    return saturate((color * (a * color + b)) / (color * (c * color + d) + e));
+}
+
 float3 Tonemap(float3 color)
 {
-    color = max(color, 0.0f.xxx);
-    color = color / (1.0f.xxx + color);
-    return pow(color, 1.0f / 2.2f);
+    color = max(color * exp2(g_scene.viewOptions.x), 0.0f.xxx);
+    uint toneMapper = (uint)round(g_scene.viewOptions.z);
+    if (toneMapper == 1u)
+    {
+        color = color / (1.0f.xxx + color);
+    }
+    else if (toneMapper == 2u)
+    {
+        color = AcesTonemap(color);
+    }
+    float gamma = max(g_scene.viewOptions.y, 0.01f);
+    return pow(saturate(color), 1.0f / gamma);
 }
 
 float3 DecodeNormal(float4 aov)

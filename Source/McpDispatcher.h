@@ -37,6 +37,7 @@ struct CommandResult
     bool ok = false;
     std::string diagnostics;
     std::string structuredJson = "{}";
+    std::string contentJson;
 };
 
 struct PendingApproval

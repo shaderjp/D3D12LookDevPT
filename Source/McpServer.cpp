@@ -121,6 +121,38 @@ namespace
             "\",\"inputSchema\":" + inputSchema + "}";
     }
 
+    std::string ResourceJson(const char* uri, const char* name, const char* title, const char* description, const char* mimeType)
+    {
+        return "{\"uri\":\"" + std::string(uri) +
+            "\",\"name\":\"" + cld::EscapeJson(name) +
+            "\",\"title\":\"" + cld::EscapeJson(title) +
+            "\",\"description\":\"" + cld::EscapeJson(description) +
+            "\",\"mimeType\":\"" + cld::EscapeJson(mimeType) + "\"}";
+    }
+
+    std::string ResourceTemplateJson(const char* uriTemplate, const char* name, const char* title, const char* description, const char* mimeType)
+    {
+        return "{\"uriTemplate\":\"" + std::string(uriTemplate) +
+            "\",\"name\":\"" + cld::EscapeJson(name) +
+            "\",\"title\":\"" + cld::EscapeJson(title) +
+            "\",\"description\":\"" + cld::EscapeJson(description) +
+            "\",\"mimeType\":\"" + cld::EscapeJson(mimeType) + "\"}";
+    }
+
+    std::string PromptJson(const char* name, const char* title, const char* description)
+    {
+        return "{\"name\":\"" + std::string(name) +
+            "\",\"title\":\"" + cld::EscapeJson(title) +
+            "\",\"description\":\"" + cld::EscapeJson(description) + "\"}";
+    }
+
+    std::string PromptTextResult(const char* description, const std::string& text)
+    {
+        return "{\"description\":\"" + cld::EscapeJson(description) +
+            "\",\"messages\":[{\"role\":\"user\",\"content\":{\"type\":\"text\",\"text\":\"" +
+            cld::EscapeJson(text) + "\"}}]}";
+    }
+
     std::string EmptyObjectSchema()
     {
         return R"json({"type":"object","properties":{},"additionalProperties":false})json";
@@ -598,7 +630,15 @@ Server::HttpResponse Server::HandleJsonRpc(const HttpRequest& request, const cld
     }
     if (method == "resources/templates/list")
     {
-        return JsonResponse(200, "OK", MakeResponse(idJson, "{\"resourceTemplates\":[]}"));
+        return JsonResponse(200, "OK", MakeResponse(idJson, BuildResourceTemplatesListJson()));
+    }
+    if (method == "prompts/list")
+    {
+        return JsonResponse(200, "OK", MakeResponse(idJson, BuildPromptsListJson()));
+    }
+    if (method == "prompts/get")
+    {
+        return HandlePromptGet(idJson, rpc);
     }
     if (method == "resources/read")
     {
@@ -675,13 +715,35 @@ Server::HttpResponse Server::HandleInitialize(const cld::JsonValue& rpc)
     }
 
     std::string result = "{\"protocolVersion\":\"" + negotiatedVersion + "\","
-        "\"capabilities\":{\"tools\":{\"listChanged\":false},\"resources\":{\"listChanged\":false}},"
+        "\"capabilities\":{\"tools\":{\"listChanged\":false},\"resources\":{\"listChanged\":false},\"prompts\":{\"listChanged\":false}},"
         "\"serverInfo\":{\"name\":\"d3d12lookdevpt\",\"title\":\"D3D12LookDevPT\",\"version\":\"0.1.0\"},"
         "\"instructions\":\"Use lookdevpt.* tools to inspect and control the local D3D12LookDevPT session.\"}";
     HttpResponse response = JsonResponse(200, "OK", MakeResponse(JsonIdToJson(rpc), result));
     response.headers.push_back({ "MCP-Session-Id", sessionId });
     AppendLog("initialize");
     return response;
+}
+
+Server::HttpResponse Server::HandlePromptGet(const std::string& idJson, const cld::JsonValue& rpc)
+{
+    const cld::JsonValue* params = JsonMember(rpc, "params");
+    if (!params || params->type != cld::JsonValue::Type::Object)
+    {
+        return JsonResponse(200, "OK", MakeError(idJson, -32602, "prompts/get requires params."));
+    }
+    const std::string name = cld::JsonStringOr(*params, "name");
+    if (name.empty())
+    {
+        return JsonResponse(200, "OK", MakeError(idJson, -32602, "prompts/get requires name."));
+    }
+    const cld::JsonValue* arguments = JsonMember(*params, "arguments");
+    bool found = false;
+    const std::string result = BuildPromptGetResultJson(name, arguments, found);
+    if (!found)
+    {
+        return JsonResponse(200, "OK", MakeError(idJson, -32004, "Unknown prompt."));
+    }
+    return JsonResponse(200, "OK", MakeResponse(idJson, result));
 }
 
 Server::HttpResponse Server::HandleDeleteSession(const HttpRequest& request)
@@ -824,7 +886,14 @@ std::string BuildActionsSchemaJson()
   "actions": [
     {"method":"set_scene","description":"Load a scene and optional environment map.","inputSchema":{"type":"object","properties":{"path":{"type":"string"},"scenePath":{"type":"string"},"environmentPath":{"type":"string"}},"additionalProperties":false}},
     {"method":"set_camera","description":"Set camera position and yaw/pitch in radians.","inputSchema":{"type":"object","properties":{"position":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3},"yaw":{"type":"number"},"pitch":{"type":"number"}},"additionalProperties":false}},
-    {"method":"set_material","description":"Override one material by index or name.","inputSchema":{"type":"object","properties":{"index":{"type":"integer"},"name":{"type":"string"},"baseColor":{"type":"array","items":{"type":"number"},"minItems":4,"maxItems":4},"emissive":{"type":"array","items":{"type":"number"},"minItems":4,"maxItems":4},"roughness":{"type":"number"},"metallic":{"type":"number"},"occlusionStrength":{"type":"number"},"normalStrength":{"type":"number"},"alphaCutoff":{"type":"number"},"alphaMasked":{"type":"boolean"},"packedORM":{"type":"boolean"}},"additionalProperties":false}},
+    {"method":"set_material","description":"Override one material by index or name, including factors and texture slot overrides.","inputSchema":{"type":"object","properties":{"index":{"type":"integer"},"name":{"type":"string"},"baseColor":{"type":"array","items":{"type":"number"},"minItems":4,"maxItems":4},"emissive":{"type":"array","items":{"type":"number"},"minItems":4,"maxItems":4},"roughness":{"type":"number"},"metallic":{"type":"number"},"occlusionStrength":{"type":"number"},"normalStrength":{"type":"number"},"alphaCutoff":{"type":"number"},"alphaMasked":{"type":"boolean"},"packedORM":{"type":"boolean"},"textures":{"type":"object","properties":{"baseColor":{"type":"string"},"normal":{"type":"string"},"roughness":{"type":"string"},"metallic":{"type":"string"},"occlusion":{"type":"string"},"emissive":{"type":"string"}},"additionalProperties":false},"clearTextures":{"type":"array","items":{"oneOf":[{"type":"integer"},{"type":"string"}]}},"resetToSource":{"type":"boolean"}},"additionalProperties":false}},
+    {"method":"set_material_texture","description":"Set, clear, or reset one material texture slot.","inputSchema":{"type":"object","properties":{"index":{"type":"integer"},"name":{"type":"string"},"slot":{"oneOf":[{"type":"integer"},{"type":"string"}]},"path":{"type":"string"},"clear":{"type":"boolean"},"resetToSource":{"type":"boolean"}},"required":["slot"],"additionalProperties":false}},
+    {"method":"reset_material","description":"Reset one material back to imported source values and textures.","inputSchema":{"type":"object","properties":{"index":{"type":"integer"},"name":{"type":"string"}},"additionalProperties":false}},
+    {"method":"save_material_variant","description":"Save or replace a named per-material variant snapshot.","inputSchema":{"type":"object","properties":{"index":{"type":"integer"},"name":{"type":"string"},"variant":{"type":"string"},"variantName":{"type":"string"}},"additionalProperties":false}},
+    {"method":"apply_material_variant","description":"Apply a named or indexed material variant.","inputSchema":{"type":"object","properties":{"index":{"type":"integer"},"name":{"type":"string"},"variant":{"type":"string"},"variantName":{"type":"string"},"variantIndex":{"type":"integer"}},"additionalProperties":false}},
+    {"method":"delete_material_variant","description":"Delete a named or indexed material variant.","inputSchema":{"type":"object","properties":{"index":{"type":"integer"},"name":{"type":"string"},"variant":{"type":"string"},"variantName":{"type":"string"},"variantIndex":{"type":"integer"}},"additionalProperties":false}},
+    {"method":"set_material_view","description":"Set selected material and material focus display mode.","inputSchema":{"type":"object","properties":{"selectedMaterial":{"type":"integer"},"focusMode":{"type":"string","enum":["normal","isolate","dim"]}},"additionalProperties":false}},
+    {"method":"set_color_management","description":"Set final view exposure, gamma, and tone mapper.","inputSchema":{"type":"object","properties":{"exposure":{"type":"number"},"gamma":{"type":"number"},"toneMapper":{"type":"string","enum":["none","reinhard","aces"]}},"additionalProperties":false}},
     {"method":"set_lighting","description":"Set direct, sky, environment, and light sampling controls.","inputSchema":{"type":"object","properties":{"direction":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3},"color":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3},"intensity":{"type":"number"},"rayTMin":{"type":"number"},"skyEnabled":{"type":"boolean"},"skyColor":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3},"skyHorizonColor":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3},"skyZenithColor":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3},"skyGroundColor":{"type":"array","items":{"type":"number"},"minItems":3,"maxItems":3},"skyIntensity":{"type":"number"},"sunIntensity":{"type":"number"},"sunSize":{"type":"number"},"environmentEnabled":{"type":"boolean"},"environmentIntensity":{"type":"number"},"environmentRotation":{"type":"number"},"sunNEE":{"type":"boolean"},"skyNEE":{"type":"boolean"},"emissiveTriangleLights":{"type":"boolean"},"emissiveIntensity":{"type":"number"},"proceduralAreaLights":{"type":"boolean"},"areaLightIntensity":{"type":"number"}},"additionalProperties":false}},
     {"method":"set_path_tracing","description":"Set path tracing mode and sampling controls.","inputSchema":{"type":"object","properties":{"mode":{"type":"string","enum":["baseline","path_tracing","restir_gi","restir_di","restir_gi_di","combined"]},"samplesPerFrame":{"type":"integer"},"maxBounces":{"type":"integer"},"minBounces":{"type":"integer"},"radianceClamp":{"type":"number"},"temporalClamp":{"type":"number"},"maxAccumSamples":{"type":"integer"},"freezeAccumulation":{"type":"boolean"},"adaptiveSampling":{"type":"boolean"},"maxAdaptiveSPP":{"type":"integer"},"varianceThreshold":{"type":"number"},"disocclusionBoost":{"type":"number"}},"additionalProperties":false}},
     {"method":"set_restir","description":"Set GI/DI ReSTIR reuse and reservoir controls.","inputSchema":{"type":"object","properties":{"temporalReuse":{"type":"boolean"},"spatialReusePasses":{"type":"integer"},"spatialRadius":{"type":"integer"},"candidateSamples":{"type":"integer"},"mClamp":{"type":"number"},"diTemporalReuse":{"type":"boolean"},"diSpatialReusePasses":{"type":"integer"},"diCandidateSamples":{"type":"integer"},"diMClamp":{"type":"number"},"reservoirReprojection":{"type":"boolean"},"reservoirValidation":{"type":"boolean"},"giValidationRay":{"type":"boolean"},"reservoirMaxAge":{"type":"integer"}},"additionalProperties":false}},
@@ -837,12 +906,33 @@ std::string BuildActionsSchemaJson()
 std::string BuildToolsListJson()
 {
     const char* actionSchema = R"json({"type":"object","properties":{"method":{"type":"string"},"params":{"type":"object"}},"required":["method","params"],"additionalProperties":false})json";
+    const char* setCameraSpeedSchema = R"json({"type":"object","properties":{"baseMoveSpeed":{"type":"number"},"fastMoveSpeed":{"type":"number"}},"additionalProperties":false})json";
+    const char* fitCameraSchema = R"json({"type":"object","properties":{"padding":{"type":"number"},"preserveOrientation":{"type":"boolean"},"yaw":{"type":"number"},"pitch":{"type":"number"}},"additionalProperties":false})json";
+    const char* displayResolutionSchema = R"json({"type":"object","properties":{"preset":{"type":"string","enum":["720p","1080p","4k"]},"width":{"type":"integer"},"height":{"type":"integer"}},"additionalProperties":false})json";
+    const char* projectPathSchema = R"json({"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":false})json";
+    const char* runActionsSchema = R"json({"type":"object","properties":{"actions":{"type":"array","items":{"type":"object","properties":{"method":{"type":"string"},"params":{"type":"object"}},"required":["method","params"],"additionalProperties":false},"minItems":1,"maxItems":16},"validateOnly":{"type":"boolean"},"stopOnError":{"type":"boolean"}},"required":["actions"],"additionalProperties":false})json";
+    const char* captureDebugPackSchema = R"json({"type":"object","properties":{"views":{"type":"array","items":{"oneOf":[{"type":"integer"},{"type":"string"}]},"maxItems":8},"restoreView":{"type":"boolean"}},"additionalProperties":false})json";
     std::vector<std::string> tools;
     tools.push_back(ToolJson("lookdevpt.get_stats", "Get renderer stats", "Return DXR, scene, renderer, ReSTIR, and denoiser stats.", EmptyObjectSchema().c_str()));
     tools.push_back(ToolJson("lookdevpt.get_state", "Get renderer state", "Return current scene, camera, lighting, path tracing, ReSTIR, denoise, and view state.", EmptyObjectSchema().c_str()));
-    tools.push_back(ToolJson("lookdevpt.list_materials", "List materials", "Return material names and editable material factors.", EmptyObjectSchema().c_str()));
+    tools.push_back(ToolJson("lookdevpt.list_materials", "List materials", "Return material names, usage counts, editable factors, and texture slot state.", EmptyObjectSchema().c_str()));
+    tools.push_back(ToolJson("lookdevpt.list_debug_views", "List debug views", "Return debug view ids, labels, and keys.", EmptyObjectSchema().c_str()));
+    tools.push_back(ToolJson("lookdevpt.list_render_modes", "List render modes", "Return path tracing mode labels and action values.", EmptyObjectSchema().c_str()));
+    tools.push_back(ToolJson("lookdevpt.get_diagnostics", "Get diagnostics", "Return scene, project, capture, and MCP diagnostics.", EmptyObjectSchema().c_str()));
     tools.push_back(ToolJson("lookdevpt.capture_viewport", "Capture viewport", "Capture the current path-traced viewport as PNG.", EmptyObjectSchema().c_str()));
+    tools.push_back(ToolJson("lookdevpt.capture_debug_pack", "Capture debug pack", "Capture up to eight debug views as PNG resources.", captureDebugPackSchema));
     tools.push_back(ToolJson("lookdevpt.validate_action", "Validate action", "Validate an action without applying it.", actionSchema));
+    tools.push_back(ToolJson("lookdevpt.run_actions", "Run actions", "Validate and run multiple action-layer mutations as one MCP request.", runActionsSchema));
+    tools.push_back(ToolJson("lookdevpt.reset_accumulation", "Reset accumulation", "Reset progressive accumulation.", EmptyObjectSchema().c_str()));
+    tools.push_back(ToolJson("lookdevpt.reset_denoise_history", "Reset denoise history", "Invalidate denoise temporal history.", EmptyObjectSchema().c_str()));
+    tools.push_back(ToolJson("lookdevpt.reset_reservoirs", "Reset reservoirs", "Reset accumulation, ReSTIR reservoirs, and denoise history.", EmptyObjectSchema().c_str()));
+    tools.push_back(ToolJson("lookdevpt.reset_camera_view", "Reset camera view", "Return the camera to the default scene view.", EmptyObjectSchema().c_str()));
+    tools.push_back(ToolJson("lookdevpt.set_camera_speed", "Set camera speed", "Set WASD base and fast camera speeds.", setCameraSpeedSchema));
+    tools.push_back(ToolJson("lookdevpt.fit_camera_to_scene", "Fit camera to scene", "Move the camera so the current scene bounds fit in view.", fitCameraSchema));
+    tools.push_back(ToolJson("lookdevpt.set_display_resolution", "Set display resolution", "Resize the application viewport/window to a preset or custom resolution.", displayResolutionSchema));
+    tools.push_back(ToolJson("lookdevpt.load_project", "Load project", "Load a local .lookdevpt.json project file.", projectPathSchema));
+    tools.push_back(ToolJson("lookdevpt.save_project", "Save project", "Save the current project path.", EmptyObjectSchema().c_str()));
+    tools.push_back(ToolJson("lookdevpt.save_project_as", "Save project as", "Save the project to a local .lookdevpt.json path.", projectPathSchema));
 
     const std::string actions = BuildActionsSchemaJson();
     cld::JsonValue root = cld::JsonParser(actions).Parse();
@@ -871,12 +961,79 @@ std::string BuildToolsListJson()
 
 std::string BuildResourcesListJson()
 {
-    return R"json({"resources":[
-{"uri":"lookdevpt://state","name":"state","title":"D3D12LookDevPT State","description":"Current renderer state as JSON.","mimeType":"application/json"},
-{"uri":"lookdevpt://stats","name":"stats","title":"D3D12LookDevPT Stats","description":"Current renderer stats as JSON.","mimeType":"application/json"},
-{"uri":"lookdevpt://materials","name":"materials","title":"Materials","description":"Scene material list as JSON.","mimeType":"application/json"},
-{"uri":"lookdevpt://actions/schema","name":"actions_schema","title":"Action Schema","description":"Action names and input schemas.","mimeType":"application/json"},
-{"uri":"lookdevpt://captures/latest.png","name":"latest_capture","title":"Latest Viewport Capture","description":"Most recent viewport capture.","mimeType":"image/png"}
-]})json";
+    std::vector<std::string> resources;
+    resources.push_back(ResourceJson("lookdevpt://state", "state", "D3D12LookDevPT State", "Current renderer state as JSON.", "application/json"));
+    resources.push_back(ResourceJson("lookdevpt://stats", "stats", "D3D12LookDevPT Stats", "Current renderer stats as JSON.", "application/json"));
+    resources.push_back(ResourceJson("lookdevpt://diagnostics", "diagnostics", "Diagnostics", "Scene, project, capture, and MCP diagnostics.", "application/json"));
+    resources.push_back(ResourceJson("lookdevpt://materials", "materials", "Materials", "Scene material list as JSON.", "application/json"));
+    resources.push_back(ResourceJson("lookdevpt://material-variants", "material_variants", "Material Variants", "Saved per-material variant snapshots.", "application/json"));
+    resources.push_back(ResourceJson("lookdevpt://material-presets", "material_presets", "Material Presets", "Built-in and user material presets.", "application/json"));
+    resources.push_back(ResourceJson("lookdevpt://debug-views", "debug_views", "Debug Views", "Available debug view ids and labels.", "application/json"));
+    resources.push_back(ResourceJson("lookdevpt://render-modes", "render_modes", "Render Modes", "Available render modes and action values.", "application/json"));
+    resources.push_back(ResourceJson("lookdevpt://project", "project", "Project", "Current project path and dirty state.", "application/json"));
+    resources.push_back(ResourceJson("lookdevpt://scene/summary", "scene_summary", "Scene Summary", "Loaded scene counts, bounds, lights, and asset paths.", "application/json"));
+    resources.push_back(ResourceJson("lookdevpt://actions/schema", "actions_schema", "Action Schema", "Action names and input schemas.", "application/json"));
+    resources.push_back(ResourceJson("lookdevpt://captures/index", "captures_index", "Capture Index", "In-memory MCP capture history.", "application/json"));
+    resources.push_back(ResourceJson("lookdevpt://captures/latest.png", "latest_capture", "Latest Viewport Capture", "Most recent viewport capture.", "image/png"));
+    std::ostringstream out;
+    out << "{\"resources\":[";
+    AppendJoined(out, resources);
+    out << "]}";
+    return out.str();
+}
+
+std::string BuildResourceTemplatesListJson()
+{
+    std::vector<std::string> templates;
+    templates.push_back(ResourceTemplateJson("lookdevpt://captures/{id}.png", "capture_by_id", "Capture By Id", "Read an in-memory PNG capture by id.", "image/png"));
+    templates.push_back(ResourceTemplateJson("lookdevpt://materials/{index}", "material_by_index", "Material By Index", "Read one material JSON object by material index.", "application/json"));
+    templates.push_back(ResourceTemplateJson("lookdevpt://materials/{index}/textures", "material_textures_by_index", "Material Textures By Index", "Read texture slots and override state for one material.", "application/json"));
+    std::ostringstream out;
+    out << "{\"resourceTemplates\":[";
+    AppendJoined(out, templates);
+    out << "]}";
+    return out.str();
+}
+
+std::string BuildPromptsListJson()
+{
+    std::vector<std::string> prompts;
+    prompts.push_back(PromptJson("lookdevpt.inspect_scene", "Inspect Scene", "Inspect the current renderer state, stats, materials, and diagnostics."));
+    prompts.push_back(PromptJson("lookdevpt.tune_denoise", "Tune Denoise", "Tune temporal denoise settings for a stable LookDev viewport."));
+    prompts.push_back(PromptJson("lookdevpt.setup_camera_shot", "Setup Camera Shot", "Create or refine a camera shot using scene bounds and current state."));
+    prompts.push_back(PromptJson("lookdevpt.capture_debug_review", "Capture Debug Review", "Capture key debug views and summarize rendering issues."));
+    std::ostringstream out;
+    out << "{\"prompts\":[";
+    AppendJoined(out, prompts);
+    out << "]}";
+    return out.str();
+}
+
+std::string BuildPromptGetResultJson(const std::string& name, const cld::JsonValue* arguments, bool& found)
+{
+    (void)arguments;
+    found = true;
+    if (name == "lookdevpt.inspect_scene")
+    {
+        return PromptTextResult("Inspect the active D3D12LookDevPT scene.",
+            "Inspect the current D3D12LookDevPT session. First call lookdevpt.get_state, lookdevpt.get_stats, lookdevpt.list_materials, and lookdevpt.get_diagnostics. Then summarize scene scale, camera position, render mode, denoise state, material count, active lights, and any obvious setup issues. Do not mutate state.");
+    }
+    if (name == "lookdevpt.tune_denoise")
+    {
+        return PromptTextResult("Tune denoise settings for stable LookDev.",
+            "Tune the D3D12LookDevPT denoise settings for a stable interactive viewport. Read state/stats first, validate the proposed set_denoise parameters with lookdevpt.validate_action, then apply lookdevpt.set_denoise only if mutation access is allowed. Prefer interactive_stable for camera work and still_capture for static review. Confirm the result with lookdevpt.get_state.");
+    }
+    if (name == "lookdevpt.setup_camera_shot")
+    {
+        return PromptTextResult("Set up a camera shot.",
+            "Set up a camera shot in D3D12LookDevPT. Read lookdevpt://scene/summary and lookdevpt.get_state, optionally call lookdevpt.fit_camera_to_scene, then use lookdevpt.set_camera for final position/yaw/pitch. Confirm with lookdevpt.get_state and capture the viewport if requested.");
+    }
+    if (name == "lookdevpt.capture_debug_review")
+    {
+        return PromptTextResult("Capture debug views for review.",
+            "Capture a debug review pack from D3D12LookDevPT. Call lookdevpt.capture_debug_pack with Final, Base Color, World Normal, Roughness, Metallic, Direct Signal, Indirect Signal, and History Confidence. Then read lookdevpt://captures/index and summarize visible render/debug issues.");
+    }
+    found = false;
+    return "{}";
 }
 }

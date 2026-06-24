@@ -55,6 +55,8 @@ struct SceneConstants
     float4 signalDenoiseOptions;
     float4 denoisePassOptions;
     float4 stabilityOptions;
+    float4 viewOptions;
+    float4 materialFocusOptions;
 };
 
 struct MeshVertex
@@ -99,6 +101,7 @@ struct RayPayload
     float metallic;
     float3 emissive;
     float ao;
+    uint materialIndex;
 };
 
 struct ShadowPayload
@@ -119,6 +122,7 @@ struct SurfaceData
     float metallic;
     float3 emissive;
     RtMaterial material;
+    uint materialIndex;
 };
 
 struct RestirReservoir
@@ -233,11 +237,49 @@ float StableSample01(uint2 pixel, uint frame, uint sampleIndex, uint dimension)
     return BlueNoise01(pixel, mixedFrame, mixedDimension);
 }
 
+float3 AcesTonemap(float3 value)
+{
+    const float a = 2.51f;
+    const float b = 0.03f;
+    const float c = 2.43f;
+    const float d = 0.59f;
+    const float e = 0.14f;
+    return saturate((value * (a * value + b)) / (value * (c * value + d) + e));
+}
+
 float3 Tonemap(float3 value)
 {
-    value = max(value, 0.0f.xxx);
-    value = value / (1.0f.xxx + value);
-    return pow(value, 1.0f / 2.2f);
+    value = max(value * exp2(g_scene.viewOptions.x), 0.0f.xxx);
+    uint toneMapper = (uint)round(g_scene.viewOptions.z);
+    if (toneMapper == 1u)
+    {
+        value = value / (1.0f.xxx + value);
+    }
+    else if (toneMapper == 2u)
+    {
+        value = AcesTonemap(value);
+    }
+    float gamma = max(g_scene.viewOptions.y, 0.01f);
+    return pow(saturate(value), 1.0f / gamma);
+}
+
+float3 ApplyMaterialFocus(float3 value, uint materialIndex, uint hit)
+{
+    uint focusMode = (uint)round(g_scene.materialFocusOptions.x);
+    if (focusMode == 0u || hit == 0u)
+    {
+        return value;
+    }
+    uint selectedMaterial = (uint)round(g_scene.materialFocusOptions.y);
+    if (materialIndex == selectedMaterial)
+    {
+        return value;
+    }
+    if (focusMode == 1u)
+    {
+        return 0.0f.xxx;
+    }
+    return value * 0.16f;
 }
 
 float Luminance(float3 color)
@@ -427,6 +469,7 @@ SurfaceData LoadSurface(uint geometryIndex, uint primitiveIndex, float2 barycent
     surface.tangent = Interpolate4(v0.tangent, v1.tangent, v2.tangent, bary);
     surface.texcoord = Interpolate2(v0.texcoord, v1.texcoord, v2.texcoord, bary);
     surface.material = g_materials[geometry.materialIndex];
+    surface.materialIndex = geometry.materialIndex;
 
     float4 baseSample = g_textures[NonUniformResourceIndex(surface.material.textureBaseIndex + TextureSlotBaseColor)].SampleLevel(g_linearSampler, surface.texcoord, 0.0f);
     float4 roughnessSample = g_textures[NonUniformResourceIndex(surface.material.textureBaseIndex + TextureSlotRoughness)].SampleLevel(g_linearSampler, surface.texcoord, 0.0f);
@@ -697,6 +740,7 @@ RayPayload EmptyPayload()
     payload.metallic = 0.0f;
     payload.emissive = 0.0f.xxx;
     payload.ao = 1.0f;
+    payload.materialIndex = 0xffffffffu;
     return payload;
 }
 
@@ -713,6 +757,7 @@ SurfaceData SurfaceFromPayload(RayPayload payload)
     surface.roughness = payload.roughness;
     surface.metallic = payload.metallic;
     surface.emissive = payload.emissive;
+    surface.materialIndex = payload.materialIndex;
     return surface;
 }
 
@@ -1026,6 +1071,10 @@ void RayGen()
     }
 #endif
 
+    color = ApplyMaterialFocus(color, firstHit.materialIndex, firstHit.hit);
+    directNee = ApplyMaterialFocus(directNee, firstHit.materialIndex, firstHit.hit);
+    indirect = ApplyMaterialFocus(indirect, firstHit.materialIndex, firstHit.hit);
+    debugColor = ApplyMaterialFocus(debugColor, firstHit.materialIndex, firstHit.hit);
     float3 currentFrameColor = color;
     float3 residualSignal = max(currentFrameColor - directNee - indirect, 0.0f.xxx);
     g_signalCurrentRadiance[pixel] = float4(currentFrameColor, 1.0f);
@@ -1118,4 +1167,5 @@ void ClosestHit(inout RayPayload payload, in BuiltInTriangleIntersectionAttribut
     payload.metallic = surface.metallic;
     payload.emissive = surface.emissive;
     payload.ao = surface.ao;
+    payload.materialIndex = surface.materialIndex;
 }

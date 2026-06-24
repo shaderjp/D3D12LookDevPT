@@ -10,6 +10,7 @@
 
 #include <array>
 #include <chrono>
+#include <deque>
 #include <map>
 #include <mutex>
 
@@ -49,6 +50,20 @@ public:
         Stable16,
         Halton,
         Off,
+    };
+
+    enum class ToneMapper
+    {
+        None,
+        Reinhard,
+        Aces,
+    };
+
+    enum class MaterialFocusMode
+    {
+        Normal,
+        Isolate,
+        Dim,
     };
 
 private:
@@ -141,6 +156,8 @@ private:
         XMFLOAT4 signalDenoiseOptions;
         XMFLOAT4 denoisePassOptions;
         XMFLOAT4 stabilityOptions;
+        XMFLOAT4 viewOptions;
+        XMFLOAT4 materialFocusOptions;
     };
 
     struct GpuTexture
@@ -167,6 +184,43 @@ private:
         ComPtr<ID3D12Resource> resource;
         UINT recordSize = 0;
         UINT recordCount = 0;
+    };
+
+    struct MaterialSnapshot
+    {
+        XMFLOAT4 baseColorFactor = XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f);
+        XMFLOAT4 emissiveFactor = XMFLOAT4(0.0f, 0.0f, 0.0f, 0.0f);
+        float roughnessFactor = 0.48f;
+        float metallicFactor = 0.0f;
+        float occlusionStrength = 1.0f;
+        float normalStrength = 1.0f;
+        float alphaCutoff = 0.33f;
+        bool alphaMasked = false;
+        bool packedOcclusionRoughnessMetallic = false;
+        std::array<std::wstring, TextureSlotCount> textures;
+        std::array<bool, TextureSlotCount> textureOverrideEnabled = {};
+    };
+
+    struct MaterialVariant
+    {
+        std::string name;
+        int materialIndex = 0;
+        std::wstring materialName;
+        MaterialSnapshot snapshot;
+    };
+
+    struct MaterialPreset
+    {
+        std::string name;
+        std::string category;
+        std::wstring sourcePath;
+        MaterialSnapshot snapshot;
+    };
+
+    struct MaterialUsage
+    {
+        uint32_t meshCount = 0;
+        uint64_t triangleCount = 0;
     };
 
     CD3DX12_VIEWPORT m_viewport;
@@ -358,12 +412,30 @@ private:
     XMFLOAT4 m_lastRestirDiOptions = XMFLOAT4(0, 0, 0, 0);
     XMFLOAT4 m_lastLightSystemOptions = XMFLOAT4(0, 0, 0, 0);
     XMFLOAT4 m_lastSignalDenoiseOptions = XMFLOAT4(0, 0, 0, 0);
+    XMFLOAT4 m_lastViewOptions = XMFLOAT4(0, 0, 0, 0);
     std::wstring m_environmentTexturePath;
     UINT m_environmentDescriptorIndex = 0;
     uint32_t m_activeLightCount = 0;
     uint32_t m_emissiveTriangleLightCount = 0;
     uint32_t m_proceduralAreaLightCount = 0;
     std::vector<Bistro::RtLight> m_lights;
+    std::vector<Bistro::Material> m_sourceMaterials;
+    std::vector<std::array<bool, TextureSlotCount>> m_textureOverrideEnabled;
+    std::vector<MaterialUsage> m_materialUsage;
+    std::vector<MaterialVariant> m_materialVariants;
+    std::vector<MaterialPreset> m_materialPresets;
+    MaterialSnapshot m_materialCompareA;
+    MaterialSnapshot m_materialCompareB;
+    bool m_hasMaterialCompareA = false;
+    bool m_hasMaterialCompareB = false;
+    int m_selectedMaterial = 0;
+    char m_materialSearch[128] = {};
+    char m_materialVariantName[128] = "Variant";
+    char m_materialPresetName[128] = "Preset";
+    ToneMapper m_toneMapper = ToneMapper::Aces;
+    float m_exposure = 0.0f;
+    float m_gamma = 2.2f;
+    MaterialFocusMode m_materialFocusMode = MaterialFocusMode::Normal;
 
     HANDLE m_fenceEvent = nullptr;
     ComPtr<ID3D12Fence> m_fence;
@@ -393,6 +465,15 @@ private:
     mcp::ToolResult SubmitMcpActionTool(const std::string& toolName, const std::string& actionMethod, const cld::JsonValue& params, bool validateOnly, int timeoutMs);
     mcp::ToolResult MakeMcpJsonToolResult(bool ok, const std::string& text, const std::string& structuredJson) const;
     bool CaptureViewportPng(std::string& base64Png, std::string& diagnostics);
+    bool RenderPathTracingOutputForCapture(std::string& diagnostics);
+    uint64_t StoreMcpCapture(std::string base64Png, int debugView, const std::string& label);
+    bool FindMcpCapture(uint64_t id, std::string& base64Png, std::string& label) const;
+    std::string BuildMcpDiagnosticsJson() const;
+    std::string BuildMcpProjectJson() const;
+    std::string BuildMcpSceneSummaryJson() const;
+    std::string BuildMcpCaptureIndexJson() const;
+    mcp::ToolResult SubmitMcpCommandTool(const std::string& toolName, const std::string& actionMethod, const cld::JsonValue& params, bool mutation, int timeoutMs);
+    mcp::CommandResult ExecuteMcpCommand(const mcp::CommandRequest& request);
     void CreateDescriptorHeap();
     void CreateOutputResources();
     void CreateGlobalRootSignature();
@@ -421,6 +502,21 @@ private:
     void ResetDenoiseHistory();
     void ResetRenderingHistory();
     void ApplyNoisePreset(NoisePreset preset);
+    void InitializeMaterialLookDevState(bool clearVariants);
+    void RebuildMaterialUsage();
+    int ResolveMaterialIndex(const cld::JsonValue& params) const;
+    MaterialSnapshot CaptureMaterialSnapshot(int materialIndex) const;
+    void ApplyMaterialSnapshot(int materialIndex, const MaterialSnapshot& snapshot, bool useSnapshotTextureFlags);
+    void ResetMaterialToSource(int materialIndex);
+    bool ValidateMaterialTexturePath(const std::wstring& path, std::string& diagnostics) const;
+    bool TryParseTextureSlot(const cld::JsonValue& value, UINT& slot) const;
+    bool ApplyMaterialTextureOverride(int materialIndex, UINT slot, const std::wstring& path, bool enableOverride, std::string& diagnostics);
+    void LoadMaterialPresets();
+    bool SaveUserMaterialPreset(const std::string& name, int materialIndex, std::string& diagnostics);
+    bool ApplyMaterialPreset(int materialIndex, size_t presetIndex, std::string& diagnostics);
+    std::string BuildMaterialTexturesJson(size_t materialIndex) const;
+    std::string BuildMaterialVariantsJson() const;
+    std::string BuildMaterialPresetsJson() const;
     void UpdateCameraMotionState();
     bool HasAccumulationStateChanged();
     UINT CreateTextureResource(const std::wstring& path, bool srgb, const uint8_t fallback[4], std::map<std::wstring, UINT>& cache);
@@ -471,7 +567,22 @@ private:
     std::string m_mcpStateJson = "{}";
     std::string m_mcpStatsJson = "{}";
     std::string m_mcpMaterialsJson = "{}";
+    std::string m_mcpDiagnosticsJson = "{}";
+    std::string m_mcpProjectJson = "{}";
+    std::string m_mcpSceneSummaryJson = "{}";
+    std::string m_mcpMaterialVariantsJson = "{}";
+    std::string m_mcpMaterialPresetsJson = "{}";
     std::string m_mcpLatestCaptureBase64;
     std::string m_mcpLastCaptureDiagnostics = "No capture has been requested.";
+    struct McpCapture
+    {
+        uint64_t id = 0;
+        int debugView = 0;
+        std::string label;
+        std::string base64Png;
+    };
+    std::deque<McpCapture> m_mcpCaptures;
+    uint64_t m_nextMcpCaptureId = 1;
+    int m_displayResolutionPreset = 1;
     std::string m_mcpUiDiagnostics;
 };
